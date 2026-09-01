@@ -4,8 +4,17 @@ Devin 插件：AI 短视频制作全流程（剧本 → 资产 → 分镜 → �
 
 ## 安装
 
-### 1. 编译 CLI 可执行文件
+### 1. 获取 vcshort 可执行文件
 
+两种方式任选其一：
+
+**方式 A：下载预编译二进制（推荐，无需 Python 环境）**
+```bash
+cd vc-short-plugin
+./download.sh
+```
+
+**方式 B：本地编译（需要 Python 3.10+）**
 ```bash
 cd vc-short-plugin
 pip install -r requirements.txt
