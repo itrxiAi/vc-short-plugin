@@ -1,0 +1,9 @@
+# vcshort 运行时依赖
+requests>=2.28
+PyYAML>=6.0
+ruamel.yaml>=0.17
+opencv-python>=4.8
+imageio-ffmpeg>=0.4.9
+
+# 打包工具（仅开发时需要）
+pyinstaller>=6.0

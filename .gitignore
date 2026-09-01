@@ -1,0 +1,26 @@
+# 编译产物（PyInstaller）—— 体积巨大，不提交，用户本地 ./build.sh 生成
+bin/
+dist/
+build/
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# IDE / 系统
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# 项目运行时产物（用户项目目录，不属于插件本身）
+projects/
+output/
