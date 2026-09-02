@@ -15,13 +15,9 @@ triggers:
 
 # 提取资产
 
-## 定位 vcshort 可执行文件
+## 前置条件
 
-本插件自带 CLI 工具 `vcshort`，位于插件根目录的 `bin/vcshort`。首次调用先定位：
-```bash
-devin skills show vc-short:extract
-```
-`Base directory` 向上两级即为插件根目录，可执行文件在 `<插件根>/bin/vcshort`。
+运行 `install.sh`（macOS/Linux）或 `install.ps1`（Windows）安装后，`vcshort` 已在 PATH 中，直接调用 `vcshort <command> ...`。
 
 ## 前置条件
 
@@ -75,7 +71,7 @@ devin skills show vc-short:extract
 ### 4. 调用脚本匹配
 
 ```bash
-<插件根>/bin/vcshort extract <项目路径> --chapter <章节号>
+vcshort extract <项目路径> --chapter <章节号>
 ```
 
 脚本会：
@@ -109,7 +105,7 @@ LLM 读取 `extract.tmp.json`，在对话中展示匹配结果：
 ### 6. 确认生成
 
 ```bash
-<插件根>/bin/vcshort extract <项目路径> --chapter <章节号> --confirm
+vcshort extract <项目路径> --chapter <章节号> --confirm
 ```
 
 脚本读取确认后的 `extract.tmp.json`，一次性完成：

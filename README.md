@@ -1,20 +1,32 @@
 # vc-short-plugin
 
-Devin 插件：AI 短视频制作全流程（剧本 → 资产 → 分镜 → 视频 → 合成）。
+AI 短视频制作插件（剧本 → 资产 → 分镜 → 视频 → 合成），兼容 Devin、Claude Code、Cursor。
 
 ## 安装
 
-### 1. 获取 vcshort 可执行文件
+### macOS / Linux
 
-两种方式任选其一：
-
-**方式 A：下载预编译二进制（推荐，无需 Python 环境）**
 ```bash
 cd vc-short-plugin
-./download.sh
+bash install.sh
 ```
 
-**方式 B：本地编译（需要 Python 3.10+）**
+### Windows
+
+```powershell
+cd vc-short-plugin
+powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+安装脚本会：
+1. 自动下载 `vcshort` 二进制（如未编译）
+2. 将 `vcshort` 加入 PATH
+3. 弹出菜单选择安装到 Devin / Claude Code / Cursor / 全部
+
+### 本地编译（可选）
+
+如果不想下载预编译版本，可以本地编译：
+
 ```bash
 cd vc-short-plugin
 pip install -r requirements.txt
@@ -23,17 +35,9 @@ pip install -r requirements.txt
 
 产物：`bin/vcshort`（单文件可执行程序，自包含 Python 运行时和所有依赖）。
 
-### 2. 安装 Devin 插件
-
-```bash
-devin plugins install ./vc-short-plugin
-```
-
-本地安装是链接式，编辑 SKILL.md 后下次 session 即生效。
-
 ## 使用
 
-安装后技能变成命名空间调用：
+安装后技能通过 slash command 调用：
 
 - `/vc-short:init <项目名>` — 初始化项目
 - `/vc-short:extract` — 提取角色/场景
@@ -50,7 +54,10 @@ devin plugins install ./vc-short-plugin
 ```
 vc-short-plugin/
 ├── .devin-plugin/
-│   └── plugin.json          # 插件清单
+│   └── plugin.json          # Devin 插件清单
+├── .claude-plugin/
+│   └── plugin.json          # Claude Code 插件清单
+├── plugin.json              # Cursor / Agent Plugins 清单
 ├── skills/                  # 9 个技能
 │   ├── init/SKILL.md
 │   ├── extract/SKILL.md
@@ -74,13 +81,15 @@ vc-short-plugin/
 ├── bin/vcshort              # 编译后的可执行文件（build.sh 生成）
 ├── vcshort.spec             # PyInstaller 打包配置
 ├── build.sh                 # 一键打包脚本
+├── install.sh               # 安装脚本（macOS/Linux）
+├── install.ps1              # 安装脚本（Windows）
 ├── requirements.txt         # Python 依赖
 └── README.md
 ```
 
 ## 工作原理
 
-每个 SKILL.md 里引用的脚本命令都改成 `vcshort <command>` 形式。Agent 首次调用时通过 `devin skills show vc-short:<skill>` 获取插件路径，推算出 `bin/vcshort` 的绝对位置后执行。
+安装脚本将 `vcshort` 加入 PATH，SKILL.md 中直接调用 `vcshort <command>`，无需定位插件路径。
 
 `vcshort` 是用 PyInstaller 编译的单文件可执行程序，自包含 Python 运行时和所有依赖（requests、ruamel.yaml、opencv、imageio-ffmpeg），用户机器不需要装 Python 环境。
 

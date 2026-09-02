@@ -75,6 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_compose.add_argument("project", help="项目路径")
     p_compose.add_argument("--chapter", required=True, help="章节号（如 ch01）")
     p_compose.add_argument("--output", default=None, help="输出文件名（默认 chapter.mp4）")
+    p_compose.add_argument("--no-subtitle", action="store_true", help="不烧录字幕")
 
     return parser
 
@@ -135,6 +136,8 @@ def main(argv=None) -> int:
         sub_argv = [args.project, "--chapter", args.chapter]
         if args.output:
             sub_argv += ["--output", args.output]
+        if args.no_subtitle:
+            sub_argv.append("--no-subtitle")
         return compose_chapter.main(sub_argv)
 
     parser.print_help()

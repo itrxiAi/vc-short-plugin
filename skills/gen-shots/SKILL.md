@@ -15,13 +15,9 @@ triggers:
 
 # 拆分分镜
 
-## 定位 vcshort 可执行文件
+## 前置条件
 
-本插件自带 CLI 工具 `vcshort`，位于插件根目录的 `bin/vcshort`。首次调用先定位：
-```bash
-devin skills show vc-short:gen-shots
-```
-`Base directory` 向上两级即为插件根目录，可执行文件在 `<插件根>/bin/vcshort`。
+运行 `install.sh`（macOS/Linux）或 `install.ps1`（Windows）安装后，`vcshort` 已在 PATH 中，直接调用 `vcshort <command> ...`。
 
 ## 前置条件
 
@@ -144,7 +140,7 @@ video: null
 LLM 将分析结果转为 JSON 数组，写入 `chapters/<章节号>/shots.json`，然后调用：
 
 ```bash
-<插件根>/bin/vcshort gen-shots <项目路径> \
+vcshort gen-shots <项目路径> \
   --chapter <章节号> [--force]
 ```
 

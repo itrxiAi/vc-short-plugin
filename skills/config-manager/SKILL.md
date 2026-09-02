@@ -11,13 +11,9 @@ triggers:
 
 # 查看项目资产
 
-## 定位 vcshort 可执行文件
+## 前置条件
 
-本插件自带 CLI 工具 `vcshort`，位于插件根目录的 `bin/vcshort`。首次调用先定位：
-```bash
-devin skills show vc-short:config-manager
-```
-`Base directory` 向上两级即为插件根目录，可执行文件在 `<插件根>/bin/vcshort`。
+运行 `install.sh`（macOS/Linux）或 `install.ps1`（Windows）安装后，`vcshort` 已在 PATH 中，直接调用 `vcshort <command> ...`。
 
 ## 用途
 
@@ -32,7 +28,7 @@ devin skills show vc-short:config-manager
 ### 列出所有资产
 
 ```bash
-<插件根>/bin/vcshort config-list <项目路径> list
+vcshort config-list <项目路径> list
 ```
 
 输出示例：

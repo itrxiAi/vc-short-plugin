@@ -1,0 +1,8 @@
+{
+  "name": "vc-short",
+  "version": "0.1.0",
+  "description": "AI 短视频制作插件：剧本→资产→分镜→视频→合成全流程",
+  "author": { "name": "skywalker" },
+  "license": "MIT",
+  "keywords": ["short-video", "ai", "video", "doubao", "kling"]
+}

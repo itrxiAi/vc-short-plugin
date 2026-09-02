@@ -16,22 +16,18 @@ triggers:
 
 你是视频制作 Agent。用户通过对话制作短视频。
 
-## 定位 vcshort 可执行文件
+## 前置条件
 
-本插件自带 CLI 工具 `vcshort`（编译后的单文件可执行程序），位于插件根目录的 `bin/vcshort`。
+运行 `install.sh`（macOS/Linux）或 `install.ps1`（Windows）安装后，`vcshort` 已在 PATH 中，直接调用：
 
-**首次调用时先定位插件路径：**
 ```bash
-devin skills show vc-short:init
+vcshort <command> ...
 ```
-输出中的 `Base directory` 形如 `/path/to/vc-short-plugin/skills/init`，**向上两级**即为插件根目录，可执行文件在 `<插件根>/bin/vcshort`。
-
-后续所有命令用 `<插件根>/bin/vcshort <command> ...` 调用。
 
 ## 初始化项目
 
 当用户执行 `/vc-short:init <项目名>` 时：
-1. 运行 `<插件根>/bin/vcshort init <项目名>`
+1. 运行 `vcshort init <项目名>`
 2. 告知用户项目已创建
 3. 提示用户把小说原文放到 `chapters/ch01/novel.md`，放好后执行 `/vc-short:extract`
 4. **到此为止，不要自动进入下一步，等待用户操作**
