@@ -12,7 +12,6 @@ from pathlib import Path
 # 目录结构定义：(相对路径, 是否为目录)
 STRUCTURE = [
     ("", True),                         # 项目根目录
-    ("script.md", False),               # 完整剧本
     ("config.yaml", False),             # 项目配置
     ("README.md", False),               # 使用说明
     ("assets", True),                   # 素材
@@ -25,27 +24,17 @@ STRUCTURE = [
     ("assets/props", True),             # 道具
     ("assets/props/.gitkeep", False),
     ("chapters", True),                 # 章节
-    ("chapters/.gitkeep", False),
+    ("chapters/ch01", True),            # 第1章
+    ("chapters/ch01/novel.md", False),  # 小说原文（用户填写）
     ("output", True),                   # 最终合成
     ("output/.gitkeep", False),
 ]
 
 # 模板文件内容
-SCRIPT_TEMPLATE = """# {name}
-
-<!-- 在这里写你的剧本 -->
-<!-- 支持多章节，用 ## 标记章节标题 -->
-
-## 第1章 末日黎明
-
-【场景1：破败公寓客厅，清晨】
-
-林浩（紧张地拉上窗帘）：妈，别看了，外面那些东西越来越多了。
-
-林母（攥着他的手，声音发抖）：你爸出去找食物三天了，他还能回来吗？
-
-林浩（沉默片刻，坚定）：会的。我们先准备好，天黑前必须离开这里。
+NOVEL_TEMPLATE = """<!-- 在这里粘贴小说原文 -->
+<!-- 放好后执行 /vc-short:extract 开始制作 -->
 """
+
 
 CONFIG_TEMPLATE = """# {name} 项目配置
 
@@ -57,8 +46,8 @@ aspect_ratio: "9:16"            # 竖屏短视频（含冒号需引号）
 api:
   base_url: https://ark.cn-beijing.volces.com/api/v3
   api_key: ""                       # 填入火山引擎 ARK API Key
-  image_model: doubao-seedream-4-5-251128  # 图片生成模型
-  video_model: doubao-seedance      # 视频生成模型
+  image_model: doubao-seedream-5-0-260128  # 图片生成模型
+  video_model: doubao-seedance-2-0-mini-260615  # 视频生成模型
 
 # 角色和场景资产由 assets 目录结构决定，无需在此配置：
 #   assets/characters/<角色名>/<角色名>.png          # 默认形态
@@ -74,7 +63,6 @@ AI 短视频制作工作空间。
 
 ```
 {name}/
-├── script.md              # 完整剧本
 ├── config.yaml            # 项目配置（风格、API）
 ├── assets/                # 素材
 │   ├── characters/        # 角色定妆照（每个角色一个文件夹）
@@ -89,9 +77,10 @@ AI 短视频制作工作空间。
 │   └── props/             # 道具图
 ├── chapters/              # 章节
 │   └── ch01/              # 第1章
-│       ├── novel.md       # 小说原文
-│       ├── character_map.yaml  # 角色映射（小说名 → assets 目录名）
-│       ├── scene_map.yaml      # 场景映射
+│       ├── novel.md       # 小说原文（用户上传）
+│       ├── script.md      # 改编剧本（gen-script 生成）
+│       ├── character_map.yaml  # 角色映射（extract 生成）
+│       ├── scene_map.yaml      # 场景映射（extract 生成）
 │       └── shots/         # 分镜
 │           ├── shot_001/
 │           │   ├── shot.yaml      # 镜头参数
@@ -102,10 +91,11 @@ AI 短视频制作工作空间。
 
 ## 使用方式
 
-1. 在 `script.md` 写剧本
-2. 跟 Devin 说：`/extract` 提取角色场景并生成图片
-3. 跟 Devin 说：`/gen-shots` 拆分分镜
-4. 跟 Devin 说：`/gen-video` 生成视频
+1. 把小说原文放到 `chapters/ch01/novel.md`
+2. 跟 Devin 说：`/vc-short:extract` 提取角色场景并生成图片
+3. 跟 Devin 说：`/vc-short:gen-script` 改编剧本
+4. 跟 Devin 说：`/vc-short:gen-shots` 拆分分镜
+5. 跟 Devin 说：`/vc-short:gen-video` 生成视频
 """
 
 
@@ -127,18 +117,18 @@ def create_project(name: str) -> None:
             full.touch()
 
     # 写入模板文件
-    (root / "script.md").write_text(
-        SCRIPT_TEMPLATE.format(name=name), encoding="utf-8"
-    )
     (root / "config.yaml").write_text(
         CONFIG_TEMPLATE.format(name=name), encoding="utf-8"
     )
     (root / "README.md").write_text(
         README_TEMPLATE.format(name=name), encoding="utf-8"
     )
+    (root / "chapters/ch01/novel.md").write_text(
+        NOVEL_TEMPLATE, encoding="utf-8"
+    )
     print(f"✅ 项目 {name} 已创建")
     print(f"   cd {name}")
-    print(f"   编辑 script.md 写剧本，然后 /video 开始制作")
+    print(f"   把小说原文放到 chapters/ch01/novel.md，然后 /vc-short:extract 开始制作")
 
 
 def main(argv=None) -> int:
