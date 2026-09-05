@@ -1,4 +1,4 @@
-name: Build Windows
+name: Build
 
 on:
   push:
@@ -7,8 +7,21 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: vcshort-windows
+            exe: vcshort.exe
+          - os: macos-latest
+            artifact: vcshort-macos
+            exe: vcshort
+          - os: ubuntu-latest
+            artifact: vcshort-linux
+            exe: vcshort
+
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -27,16 +40,16 @@ jobs:
 
       - name: Test executable
         run: |
-          dist\vcshort.exe --help
+          dist/${{ matrix.exe }} --help
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: vcshort-windows
-          path: dist/vcshort.exe
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.exe }}
 
       - name: Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/vcshort.exe
+          files: dist/${{ matrix.exe }}
