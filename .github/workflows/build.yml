@@ -44,14 +44,19 @@ jobs:
         run: |
           dist/${{ matrix.exe }} --help
 
+      - name: Rename for release
+        shell: bash
+        run: |
+          cp "dist/${{ matrix.exe }}" "dist/${{ matrix.artifact }}"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: dist/${{ matrix.exe }}
+          path: dist/${{ matrix.artifact }}
 
       - name: Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/${{ matrix.exe }}
+          files: dist/${{ matrix.artifact }}
