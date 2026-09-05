@@ -39,6 +39,8 @@ jobs:
           pyinstaller vcshort.spec --clean
 
       - name: Test executable
+        env:
+          PYTHONIOENCODING: utf-8
         run: |
           dist/${{ matrix.exe }} --help
 
