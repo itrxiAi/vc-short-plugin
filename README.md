@@ -37,17 +37,75 @@ pip install -r requirements.txt
 
 ## 使用
 
-安装后技能通过 slash command 调用：
+安装后技能通过 slash command 调用，建议按顺序执行：
 
-- `/vc-short:init <项目名>` — 初始化项目
-- `/vc-short:extract` — 提取角色/场景
-- `/vc-short:gen-image` — 生成图片资产
-- `/vc-short:fix-image` — 修改图片
-- `/vc-short:gen-script` — 改编剧本
-- `/vc-short:gen-shots` — 拆分分镜
-- `/vc-short:gen-video` — 生成分镜视频
-- `/vc-short:compose-chapter` — 合成章节视频
-- `/vc-short:config-manager list` — 列出资产
+### `/vc-short:init <项目名>` — 初始化项目
+
+创建项目骨架目录。**产物：**
+
+- `<项目名>/config.yaml` — 全局配置（`style`、`aspect_ratio`、`api.api_key`）
+- `<项目名>/assets/` — 资产根目录（含 `characters/`、`scenes/`、`costumes/`、`props/` 子目录）
+- `<项目名>/chapters/` — 章节根目录
+
+执行后需手动把小说原文放到 `chapters/ch01/novel.md`，再进入下一步。
+
+### `/vc-short:extract` — 提取角色/场景
+
+从 `chapters/<章节号>/novel.md` 提取角色和场景，与已有 `assets/` 目录匹配，用户确认后生成映射。**产物：**
+
+- `chapters/<章节号>/extract.tmp.json` — 临时文件（LLM 生成 → 脚本写回 `matched` → 用户确认 → `--confirm` 后删除）
+- `chapters/<章节号>/character_map.yaml` — 角色映射（剧本角色名 → assets 目录名，最终版）
+- `chapters/<章节号>/scene_map.yaml` — 场景映射（剧本场景描述 → assets 目录名）
+
+未匹配的新资产需用 `/vc-short:gen-image` 生成图片。
+
+### `/vc-short:gen-image` — 生成图片资产
+
+调用 doubao-seedream API 生成角色/服装/道具/场景图片，保存到 `assets/` 目录。**产物：**
+
+- 角色：`assets/characters/<角色名>/<角色名>.png`（默认形态）或 `<角色名>-<形态>.png`（其他形态）
+- 服装：`assets/costumes/<服装名>.png`
+- 道具：`assets/props/<道具名>.png`
+- 场景：`assets/scenes/<场景名>/<N>.png`（数字递增，支持多张）
+
+### `/vc-short:fix-image` — 修改图片
+
+基于原图 + 提示词调用 doubao-seededit API 编辑已有资产。**产物：**
+
+- 覆盖原图片文件（如 `assets/characters/<角色名>/<角色名>.png`）
+- `<原文件名>.png.bak` — 原图自动备份，不满意可恢复
+
+### `/vc-short:gen-script` — 改编剧本
+
+将 `chapters/<章节号>/novel.md` 改编为适合 1-3 分钟短视频的剧本。**产物：**
+
+- `chapters/<章节号>/script.md` — 改编剧本（用 `【场景X：描述，时间】` 分隔，精简对白、动作可视化）
+
+### `/vc-short:gen-shots` — 拆分分镜
+
+读取剧本和映射文件，拆分为多个 10 秒分镜，写入 YAML。**产物：**
+
+- `chapters/<章节号>/shots.json` — 临时 JSON（脚本消费后删除）
+- `chapters/<章节号>/shots/shot_001/shot.yaml` — 分镜参数（`visual_prompt`、`characters`、`scene`、`camera`、`dialogue`、`status: pending`）
+- `chapters/<章节号>/shots/shot_002/shot.yaml` … 依次递增
+
+### `/vc-short:gen-video` — 生成分镜视频
+
+调用图生视频 API，将分镜 YAML 转为视频，并提取首尾帧保持分镜连贯。**产物：**
+
+- `chapters/<章节号>/shots/shot_<N>/shot.mp4` — 分镜视频（5 或 10 秒，分辨率 720p）
+- `chapters/<章节号>/shots/shot_<N>/first_frame.png` — 视频首帧
+- `chapters/<章节号>/shots/shot_<N>/last_frame.png` — 视频尾帧（下一分镜生成时作为参考图）
+
+### `/vc-short:compose-chapter` — 合成章节视频
+
+用 ffmpeg concat 按分镜号顺序拼接章节下所有 `shot.mp4`。**产物：**
+
+- `chapters/<章节号>/chapter.mp4` — 章节完整视频（可用 `--output` 自定义文件名）
+
+### `/vc-short:config-manager list` — 列出资产
+
+扫描 `assets/` 目录，按角色/场景/服装/道具分类列出已有资产及图片数量，不产生文件，仅打印到终端。
 
 ## 目录结构
 
