@@ -1,3 +1,4 @@
+$ErrorActionPreference = "Stop"
 # vc-short-plugin 安装脚本（Windows PowerShell）
 # 用法（一行命令安装）：
 #   irm https://raw.githubusercontent.com/itrxiAi/vc-short-plugin/main/install.ps1 | iex
@@ -7,8 +8,6 @@
 # 强制 UTF-8 输出，避免中文乱码（Windows PowerShell 5.1 默认 cp1252）
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
-
-$ErrorActionPreference = "Stop"
 
 $Version = "v0.1.0"
 $Repo = "itrxiAi/vc-short-plugin"
@@ -21,25 +20,25 @@ $BinDir = "$InstallDir\bin"
 $BinName = "vcshort.exe"
 
 Write-Host ""
-Write-Host "╔══════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║   vc-short-plugin 安装程序           ║" -ForegroundColor Cyan
-Write-Host "╚══════════════════════════════════════╝" -ForegroundColor Cyan
+Write-Host "=======================================" -ForegroundColor Cyan
+Write-Host "   vc-short-plugin installer" -ForegroundColor Cyan
+Write-Host "=======================================" -ForegroundColor Cyan
 Write-Host ""
 
 # ========== 1. 创建安装目录 ==========
-Write-Host "==> [1/4] 创建安装目录: $InstallDir" -ForegroundColor Cyan
+Write-Host "==> [1/4] Install dir: $InstallDir" -ForegroundColor Cyan
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 
 # ========== 2. 下载插件文件 ==========
-Write-Host "==> [2/4] 下载插件文件..." -ForegroundColor Cyan
+Write-Host "==> [2/4] Download plugin files..." -ForegroundColor Cyan
 $zipPath = "$env:TEMP\vc-short-plugin.zip"
 $extractDir = "$env:TEMP\vc-short-plugin-extract"
 
 try {
-    Invoke-WebRequest -Uri $ZipUrl -OutFile $zipPath -ProgressAction Continue
+    Invoke-WebRequest -Uri $ZipUrl -OutFile $zipPath
 } catch {
-    Write-Host "❌ 下载插件文件失败: $_" -ForegroundColor Red
+    Write-Host "[ERROR] Download failed: $_" -ForegroundColor Red
     exit 1
 }
 
@@ -66,65 +65,65 @@ foreach ($item in $pluginFiles) {
 # 清理临时文件
 Remove-Item -Force $zipPath -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $extractDir -ErrorAction SilentlyContinue
-Write-Host "✅ 插件文件已安装" -ForegroundColor Green
+Write-Host "[OK] Plugin files installed" -ForegroundColor Green
 
 # ========== 3. 下载二进制 ==========
-Write-Host "==> [3/4] 下载 vcshort 二进制..." -ForegroundColor Cyan
+Write-Host "==> [3/4] Download vcshort binary..." -ForegroundColor Cyan
 $binPath = "$BinDir\$BinName"
 $url = "$BaseUrl/vcshort-windows"
 
 try {
-    Invoke-WebRequest -Uri $url -OutFile $binPath -ProgressAction Continue
+    Invoke-WebRequest -Uri $url -OutFile $binPath
 } catch {
-    Write-Host "❌ 下载二进制失败: $_" -ForegroundColor Red
-    Write-Host "   请检查 Release $Version 是否已发布" -ForegroundColor Yellow
+    Write-Host "[ERROR] Binary download failed: $_" -ForegroundColor Red
+    Write-Host "   Please check Release $Version exists" -ForegroundColor Yellow
     exit 1
 }
 
 # 验证
 if (& $binPath --help 2>$null) {
-    Write-Host "✅ 二进制验证通过" -ForegroundColor Green
+    Write-Host "[OK] Binary verified" -ForegroundColor Green
 } else {
-    Write-Host "❌ 二进制验证失败，文件可能损坏" -ForegroundColor Red
+    Write-Host "[ERROR] Binary verification failed" -ForegroundColor Red
     Remove-Item -Force $binPath -ErrorAction SilentlyContinue
     exit 1
 }
 
 # ========== 4. 加入 PATH ==========
-Write-Host "==> [4/4] 配置 PATH..." -ForegroundColor Cyan
+Write-Host "==> [4/4] Configure PATH..." -ForegroundColor Cyan
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if ($userPath -notlike "*$BinDir*") {
     [Environment]::SetEnvironmentVariable("Path", "$userPath;$BinDir", "User")
-    Write-Host "✅ 已将 $BinDir 加入用户 PATH" -ForegroundColor Green
-    Write-Host "   请重新打开终端使 PATH 生效" -ForegroundColor Yellow
+    Write-Host "[OK] Added $BinDir to PATH" -ForegroundColor Green
+    Write-Host "   Reopen terminal to take effect" -ForegroundColor Yellow
 } else {
-    Write-Host "✅ PATH 已包含 $BinDir" -ForegroundColor Green
+    Write-Host "[OK] PATH already contains $BinDir" -ForegroundColor Green
 }
 
 # ========== 安装到平台 ==========
 Write-Host ""
-Write-Host "选择安装到哪个 agent："
+Write-Host "Install to which agent?"
 Write-Host "  1) Devin CLI"
 Write-Host "  2) Claude Code"
 Write-Host "  3) Cursor"
-Write-Host "  4) 全部安装"
-Write-Host "  5) 跳过（仅安装 CLI）"
+Write-Host "  4) All"
+Write-Host "  5) Skip (CLI only)"
 Write-Host ""
-$choice = Read-Host "请输入序号 [1-5]"
+$choice = Read-Host "Choice [1-5]"
 
 function Install-Devin {
-    Write-Host "==> 安装到 Devin CLI..." -ForegroundColor Cyan
+    Write-Host "==> Installing to Devin CLI..." -ForegroundColor Cyan
     if (Get-Command devin -ErrorAction SilentlyContinue) {
         & devin plugins install $InstallDir
-        Write-Host "✅ Devin 插件安装完成" -ForegroundColor Green
+        Write-Host "[OK] Devin plugin installed" -ForegroundColor Green
     } else {
-        Write-Host "⚠️ 未找到 devin 命令，跳过" -ForegroundColor Yellow
-        Write-Host "   安装 Devin CLI 后运行: devin plugins install $InstallDir"
+        Write-Host "[WARN] devin not found, skipped" -ForegroundColor Yellow
+        Write-Host "   After installing Devin CLI: devin plugins install $InstallDir"
     }
 }
 
 function Install-Claude {
-    Write-Host "==> 安装到 Claude Code..." -ForegroundColor Cyan
+    Write-Host "==> Installing to Claude Code..." -ForegroundColor Cyan
     $targetDir = "$env:USERPROFILE\.claude\plugins"
     $target = Join-Path $targetDir "vc-short"
     New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
@@ -132,12 +131,12 @@ function Install-Claude {
         Remove-Item -Recurse -Force $target
     }
     cmd /c mklink /J "$target" "$InstallDir" | Out-Null
-    Write-Host "✅ 已链接到 $target" -ForegroundColor Green
-    Write-Host "   重启 Claude Code 后生效"
+    Write-Host "[OK] Linked to $target" -ForegroundColor Green
+    Write-Host "   Restart Claude Code to take effect"
 }
 
 function Install-Cursor {
-    Write-Host "==> 安装到 Cursor..." -ForegroundColor Cyan
+    Write-Host "==> Installing to Cursor..." -ForegroundColor Cyan
     $targetDir = "$env:USERPROFILE\.cursor\plugins\local"
     $target = Join-Path $targetDir "vc-short"
     New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
@@ -145,8 +144,8 @@ function Install-Cursor {
         Remove-Item -Recurse -Force $target
     }
     cmd /c mklink /J "$target" "$InstallDir" | Out-Null
-    Write-Host "✅ 已链接到 $target" -ForegroundColor Green
-    Write-Host "   重启 Cursor 或运行 Developer: Reload Window 后生效"
+    Write-Host "[OK] Linked to $target" -ForegroundColor Green
+    Write-Host "   Restart Cursor or run Developer: Reload Window"
 }
 
 switch ($choice) {
@@ -154,11 +153,11 @@ switch ($choice) {
     "2" { Install-Claude }
     "3" { Install-Cursor }
     "4" { Install-Devin; Install-Claude; Install-Cursor }
-    "5" { Write-Host "跳过插件安装" -ForegroundColor Yellow }
-    default { Write-Host "❌ 无效选择" -ForegroundColor Red; exit 1 }
+    "5" { Write-Host "Skipped" -ForegroundColor Yellow }
+    default { Write-Host "[ERROR] Invalid choice" -ForegroundColor Red; exit 1 }
 }
 
 Write-Host ""
-Write-Host "✅ 安装完成！" -ForegroundColor Green
-Write-Host "   安装目录: $InstallDir"
-Write-Host "   验证: 重新打开终端后运行 vcshort --help"
+Write-Host "[OK] Installation complete!" -ForegroundColor Green
+Write-Host "   Install dir: $InstallDir"
+Write-Host "   Verify: reopen terminal, run vcshort --help"
