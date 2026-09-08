@@ -14,11 +14,19 @@ curl -fsSL https://raw.githubusercontent.com/itrxiAi/vc-short-plugin/main/instal
 
 ### Windows
 
-一行命令安装（PowerShell）：
+一行命令安装（PowerShell 7+）：
 
 ```powershell
 irm https://raw.githubusercontent.com/itrxiAi/vc-short-plugin/main/install.ps1 | iex
 ```
+
+Windows PowerShell 5.1（Windows 10 默认）对中文编码支持较差，建议安装 PowerShell 7：
+
+```powershell
+winget install Microsoft.PowerShell
+```
+
+然后用 `pwsh` 代替 `powershell` 运行上述命令。
 
 安装脚本会自动完成：
 1. 创建安装目录（`~/.vcshort/` 或 `%USERPROFILE%\.vcshort\`）

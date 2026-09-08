@@ -1,8 +1,13 @@
-# vc-short-plugin 安装脚本（Windows PowerShell）
+﻿# vc-short-plugin 安装脚本（Windows PowerShell）
 # 用法（一行命令安装）：
 #   irm https://raw.githubusercontent.com/itrxiAi/vc-short-plugin/main/install.ps1 | iex
 # 或本地运行：
 #   powershell -ExecutionPolicy Bypass -File install.ps1
+
+# 强制 UTF-8 输出，避免中文乱码（Windows PowerShell 5.1 默认 cp1252）
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
 $ErrorActionPreference = "Stop"
 
 $Version = "v0.1.0"
