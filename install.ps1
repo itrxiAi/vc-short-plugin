@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 # vc-short-plugin 安装脚本（Windows PowerShell）
 # 用法（一行命令安装）：
 #   irm https://raw.githubusercontent.com/itrxiAi/vc-short-plugin/main/install.ps1 | iex
@@ -112,13 +112,14 @@ Write-Host ""
 $choice = Read-Host "Choice [1-5]"
 
 function Install-Devin {
-    Write-Host "==> Installing to Devin CLI..." -ForegroundColor Cyan
+    Write-Host "==> Installing to Devin..." -ForegroundColor Cyan
     if (Get-Command devin -ErrorAction SilentlyContinue) {
-        & devin plugins install $InstallDir
+        & devin plugins install --local $InstallDir
         Write-Host "[OK] Devin plugin installed" -ForegroundColor Green
     } else {
         Write-Host "[WARN] devin not found, skipped" -ForegroundColor Yellow
-        Write-Host "   After installing Devin CLI: devin plugins install $InstallDir"
+        Write-Host "   After installing Devin CLI, run:"
+        Write-Host "   devin plugins install --local $InstallDir"
     }
 }
 

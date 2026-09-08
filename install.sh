@@ -121,13 +121,14 @@ esac
 
 # ========== 安装到平台 ==========
 install_devin() {
-  echo "==> 安装到 Devin CLI..."
+  echo "==> Installing to Devin..."
   if command -v devin >/dev/null 2>&1; then
-    devin plugins install "${INSTALL_DIR}"
-    echo "✅ Devin 插件安装完成"
+    devin plugins install --local "${INSTALL_DIR}"
+    echo "✅ Devin plugin installed"
   else
-    echo "⚠️ 未找到 devin 命令，跳过"
-    echo "   安装 Devin CLI 后运行: devin plugins install ${INSTALL_DIR}"
+    echo "⚠️ devin not found, skipped"
+    echo "   After installing Devin CLI, run:"
+    echo "   devin plugins install --local ${INSTALL_DIR}"
   fi
 }
 
