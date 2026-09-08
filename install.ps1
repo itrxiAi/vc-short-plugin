@@ -1,4 +1,4 @@
-﻿# vc-short-plugin 安装脚本（Windows PowerShell）
+# vc-short-plugin 安装脚本（Windows PowerShell）
 # 用法（一行命令安装）：
 #   irm https://raw.githubusercontent.com/itrxiAi/vc-short-plugin/main/install.ps1 | iex
 # 或本地运行：
