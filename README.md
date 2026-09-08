@@ -6,28 +6,35 @@ AI 短视频制作插件（剧本 → 资产 → 分镜 → 视频 → 合成）
 
 ### macOS / Linux
 
+一行命令安装：
+
 ```bash
-cd vc-short-plugin
-bash install.sh
+curl -fsSL https://raw.githubusercontent.com/itrxiAi/vc-short-plugin/main/install.sh | bash
 ```
 
 ### Windows
 
+一行命令安装（PowerShell）：
+
 ```powershell
-cd vc-short-plugin
-powershell -ExecutionPolicy Bypass -File install.ps1
+irm https://raw.githubusercontent.com/itrxiAi/vc-short-plugin/main/install.ps1 | iex
 ```
 
-安装脚本会：
-1. 自动下载 `vcshort` 二进制（如未编译）
-2. 将 `vcshort` 加入 PATH
-3. 弹出菜单选择安装到 Devin / Claude Code / Cursor / 全部
+安装脚本会自动完成：
+1. 创建安装目录（`~/.vcshort/` 或 `%USERPROFILE%\.vcshort\`）
+2. 下载插件文件（skills、plugin.json 等，不需要 git）
+3. 下载对应平台的 `vcshort` 二进制
+4. 将 `vcshort` 加入 PATH
+5. 弹出菜单选择安装到 Devin / Claude Code / Cursor / 全部
+
+安装完成后重新打开终端，运行 `vcshort --help` 验证。
 
 ### 本地编译（可选）
 
 如果不想下载预编译版本，可以本地编译：
 
 ```bash
+git clone https://github.com/itrxiAi/vc-short-plugin.git
 cd vc-short-plugin
 pip install -r requirements.txt
 ./build.sh
