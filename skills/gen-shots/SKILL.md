@@ -63,9 +63,6 @@ chapter: "ch01"
 script_segment: |
   对应的小说/剧本原文
 
-# 画面描述（用于关键帧生成）
-visual_prompt: "详细的画面描述，包含角色、场景、动作、氛围"
-
 # 角色引用（对应 assets 目录名，支持 "角色名:形态名"）
 characters:
   - 小帅
@@ -79,13 +76,7 @@ camera:
   shot_type: "中景"
   angle: "平视"
   movement: "固定"
-  duration: 10
-
-# 对白/旁白（列表，可多段）
-dialogue:
-  - speaker: 小帅
-    text: "台词内容"
-    emotion: "情绪"
+  duration: 15
 
 # 生成状态
 status: "pending"
@@ -110,30 +101,20 @@ video: null
 
 ### 3. 分析剧本，拆分分镜
 
-阅读剧本内容，进行分镜拆分：
+分镜完全按剧本场景走，一个场景对应一个分镜。剧本已在 gen-script 阶段按 15 秒时长拆好，直接将每个场景转为一个分镜。
 
-- **尽量少的分镜数目**：内容要充实，API 只支持 10 秒，所有分镜时长统一为 10 秒
-- **对白字数判断**（自然对白约 4 字/秒，10 秒约 30-40 字）：
-  - 2-3 句短对白 + 动作，或 1 段长对白，或一段复杂动作（不要把人物描写按动作处理）
+### 4. 提取角色和场景
 
-
-### 4. 生成 visual_prompt
-
-为每个分镜生成画面描述，要求：
-
-- **包含角色外貌特征**：从小说原文或 extract.tmp.json 中获取角色的描述
-- **包含场景描述**：从小说原文或 extract.tmp.json 中获取场景的描述
-- **包含动作和情绪**：从剧本文本中提取
-- **附加项目风格**：自动拼接 `config.yaml` 中的 `style` 和 `aspect_ratio`
-- **用中文描述**：与图片生成提示词一致
+从 script_segment 中提取出场角色和场景：
+- **characters**：script_segment 中出现的所有角色名
+- **scene**：script_segment 所属的场景名
 
 ### 5. 检查分镜字数
 
-逐个检查拆分好的分镜，不满足则重新拆分：
+逐个检查拆分好的分镜，不满足则提示用户重新 gen-script：
 
-- **对白总字数检查**：低字数对白重点检查是否能撑起10s，不能则合并
+- **对白总字数检查**：低字数对白重点检查是否能撑起15s，不能则提示用户合并场景
 - **内容足够简洁**：无冗余描述，无重复信息
-- **不满足则重新拆分**：回到第 3 步调整该分镜
 
 ### 6. 调用脚本写入分镜文件
 
@@ -146,21 +127,18 @@ vcshort gen-shots <项目路径> \
 
 脚本会自动读取 `chapters/<章节号>/shots.json`，生成 YAML 分镜文件后删除该 JSON 文件。
 
-JSON 数组格式（`characters` 和 `dialogue.speaker` 使用**剧本角色名**，`scene` 使用**剧本场景描述**，脚本会自动通过 character_map.yaml 和 scene_map.yaml 映射为 assets 目录名）：
+JSON 数组格式（`characters` 使用**剧本角色名**，`scene` 使用**剧本场景描述**，脚本会自动通过 character_map.yaml 和 scene_map.yaml 映射为 assets 目录名）：
 ```json
 [
   {
-    "script_segment": "林霸（嬉皮笑脸，抢过饼干袋）：哟，这饼干不错啊...",
-    "visual_prompt": "学校操场角落，壮实男子满脸横肉眼下有疤，嬉皮笑脸抢过饼干袋，女孩穿黑色帽衫...",
-    "characters": ["林霸", "小美"],
-    "scene": "操场角落",
-    "camera": {"shot_type": "中景", "angle": "平视", "movement": "固定", "duration": 10},
-    "dialogue": [{"speaker": "林霸", "text": "哟，这饼干不错啊", "emotion": "嬉皮笑脸"}]
+    "script_segment": "角色名（动作）：台词...",
+    "characters": ["角色名A", "角色名B"],
+    "scene": "场景名",
+    "camera": {"shot_type": "中景", "angle": "平视", "movement": "固定", "duration": 15}
   }
 ]
 ```
 
-- 无对白的分镜，`dialogue` 设为 `null`
 - 已有分镜文件时，追加 `--force` 覆盖
 - 脚本会自动加载 `character_map.yaml` 和 `scene_map.yaml` 进行映射
 
@@ -173,9 +151,7 @@ JSON 数组格式（`characters` 和 `dialogue.speaker` 使用**剧本角色名*
 ## 注意事项
 
 - 分镜拆分要自然，不要把一个完整动作或对白拆到两个分镜
-- `visual_prompt` 要详细 enough 用于后续关键帧生成，但不要太长
-- JSON 中 `characters`、`dialogue.speaker`、`scene` 使用剧本中的原始名称，脚本自动映射
+- JSON 中 `characters`、`scene` 使用剧本中的原始名称，脚本自动映射
 - 如果映射文件中找不到对应关系，脚本会保留原名称，用户可后续手动修改映射文件后重新生成
-- 无对白的分镜，`dialogue` 字段设为 `null`
 - 角色多形态：`character_map.yaml` 的值支持 `角色名:形态名` 格式（如 `小美: 小帅:女装`），映射到 assets 目录 `assets/characters/小帅/小帅-女装.png`
 - 所有 YAML 文件由脚本用 ruamel.yaml 生成，格式统一，不要手动编辑 shot YAML

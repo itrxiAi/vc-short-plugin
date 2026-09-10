@@ -47,9 +47,10 @@ def load_config(project_root: Path) -> dict:
 def build_prompt(user_prompt: str, style_config: dict, asset_type: str = None) -> str:
     """将用户提示词与项目风格配置拼接。"""
     parts = [user_prompt]
-    # 角色默认全身照，避免下身不一致
+    # 角色默认全身照 + 纯色背景，避免下身不一致和背景干扰
     if asset_type == "character":
         parts.append("全身照")
+        parts.append("纯白背景")
     # 场景不出现人物，避免干扰后续图生视频
     if asset_type == "scene":
         parts.append("不要出现人物")
@@ -126,11 +127,13 @@ def main(argv=None) -> int:
     parser.add_argument("project", help="项目路径")
     parser.add_argument("--type", required=True, choices=TYPE_MAP.keys(), help="资产类型")
     parser.add_argument("--name", required=True, help="资产名称（项目内唯一）")
-    parser.add_argument("--prompt", required=True, help="生成提示词")
+    parser.add_argument("--prompt", default=None, help="生成提示词（角色类型可省略，读 character.yaml）")
     parser.add_argument("--size", default="2K", help="图片尺寸 (2K/3K/4K)")
     parser.add_argument("--model", default=None, help="模型 ID（默认读 config.yaml）")
     parser.add_argument("--force", action="store_true", help="覆盖同名资产")
     parser.add_argument("--form", default=None, help="角色形态名（仅 type=character 时使用，默认 default）")
+    parser.add_argument("--gender", default=None, choices=["male", "female"], help="角色性别（仅 type=character，生成图片后自动生成音色）")
+    parser.add_argument("--no-voice", action="store_true", help="不自动生成音色（仅 type=character）")
     args = parser.parse_args(argv)
 
     project_root = Path(args.project).resolve()
@@ -152,6 +155,21 @@ def main(argv=None) -> int:
             image_filename = f"{args.name}-{form_name}.png"
         image_path = char_dir / image_filename
         image_rel = f"assets/{asset_dir_name}/{args.name}/{image_filename}"
+
+        # 读取 character.yaml 档案（gender / appearance）
+        char_yaml_path = char_dir / "character.yaml"
+        char_yaml = {}
+        if char_yaml_path.exists():
+            with open(char_yaml_path, encoding="utf-8") as f:
+                char_yaml = yaml.safe_load(f) or {}
+        # CLI --gender 覆盖档案里的 gender
+        effective_gender = args.gender or char_yaml.get("gender") or ""
+        # CLI --prompt 覆盖档案里的 appearance
+        effective_prompt = args.prompt or char_yaml.get("appearance") or ""
+        if not effective_prompt:
+            print("错误：未提供提示词，且 character.yaml 中无 appearance 字段", file=sys.stderr)
+            print(f"请编辑 {char_yaml_path} 填入 appearance，或通过 --prompt 指定", file=sys.stderr)
+            return 1
     elif args.type == "scene":
         form_name = None
         scene_dir = asset_dir / args.name
@@ -186,7 +204,7 @@ def main(argv=None) -> int:
     model = args.model or api_config.get("image_model", DEFAULT_MODEL)
 
     # 拼接提示词
-    final_prompt = build_prompt(args.prompt, style_config, args.type)
+    final_prompt = build_prompt(effective_prompt if args.type == "character" else args.prompt, style_config, args.type)
 
     # 生成图片
     print(f"正在生成 {args.type} 图片: {args.name}")
@@ -203,4 +221,18 @@ def main(argv=None) -> int:
     label = f"{args.name}:{form_name}" if form_name else args.name
     print(f"\n✅ {args.type} '{label}' 生成完成")
     print(f"   图片: {image_path}")
+
+    # 角色类型且提供了性别且未禁用音色 → 自动生成音色
+    if args.type == "character" and effective_gender and not args.no_voice:
+        print(f"\n--- 自动生成角色音色 ---")
+        from . import gen_voice
+        voice_argv = [str(project_root), "--name", args.name, "--gender", effective_gender]
+        if args.force:
+            voice_argv.append("--force")
+        try:
+            gen_voice.main(voice_argv)
+        except SystemExit as e:
+            if e.code and e.code != 0:
+                print(f"⚠️  音色生成失败（不影响图片结果）", file=sys.stderr)
+
     return 0

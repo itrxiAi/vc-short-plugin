@@ -14,10 +14,12 @@
 
 1. `/vc-short:init` 初始化项目
 2. `/vc-short:extract` 提取角色/场景
-3. `/vc-short:gen-image` 生成图片资产
-4. `/vc-short:gen-script` 改编剧本
-5. `/vc-short:gen-shots` 拆分分镜
-6. `/vc-short:gen-video` 生成分镜视频
-7. `/vc-short:compose-chapter` 合成章节视频
+3. `/vc-short:gen-character` 生成角色资产（图片+音色）
+4. `/vc-short:gen-image` 生成场景/服装/道具图片
+5. `/vc-short:gen-voice` 重新生成角色音色（不满意时用）
+6. `/vc-short:gen-script` 改编剧本
+7. `/vc-short:gen-shots` 拆分分镜
+8. `/vc-short:gen-video` 生成分镜视频
+9. `/vc-short:compose-chapter` 合成章节视频
 
 每一步完成后都要让用户确认，不要跳步。

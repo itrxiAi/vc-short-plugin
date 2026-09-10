@@ -72,6 +72,6 @@ vcshort gen-video <项目路径> \
 - 角色和场景图片必须已生成（`/vc-short:gen-image`），否则会跳过缺失的参考图
 - 已有视频的分镜（`shots/shot_<分镜号>/shot.mp4` 已存在）会跳过，不重复生成
 - 视频分辨率默认 720p，比例从 `config.yaml` 的 `aspect_ratio` 读取
-- duration 从 shot YAML 的 `camera.duration` 读取，只支持 5 或 10 秒
+- duration 从 shot YAML 的 `camera.duration` 读取，支持 5/10/15 秒
 - **分镜连贯性**：生成视频后自动提取第一帧和最后一帧，下一个分镜生成时会用上一镜的 `last_frame.png` 作为参考，保持画面衔接
 - 需要安装 `opencv-python`（`pip install opencv-python`），否则跳过帧提取

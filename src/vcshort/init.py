@@ -40,7 +40,7 @@ CONFIG_TEMPLATE = """# {name} 项目配置
 
 # 视频风格
 style: 动漫3D
-aspect_ratio: "9:16"            # 竖屏短视频（含冒号需引号）
+aspect_ratio: "16:9"            # 横屏（含冒号需引号，竖屏用 9:16）
 
 # API 配置
 api:
@@ -48,6 +48,12 @@ api:
   api_key: ""                       # 填入火山引擎 ARK API Key
   image_model: doubao-seedream-5-0-260128  # 图片生成模型
   video_model: doubao-seedance-2-0-mini-260615  # 视频生成模型
+
+# TTS 配置（火山引擎豆包语音合成，用于生成角色音色）
+tts:
+  app_id: ""                          # 火山引擎语音合成 App ID
+  access_key: ""                      # 火山引擎语音合成 Access Token
+  resource_id: "seed-tts-2.0"          # 豆包语音合成模型版本
 
 # 角色和场景资产由 assets 目录结构决定，无需在此配置：
 #   assets/characters/<角色名>/<角色名>.png          # 默认形态

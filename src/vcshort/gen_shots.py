@@ -11,19 +11,15 @@ JSON 格式示例：
 [
   {
     "script_segment": "林浩（紧张地拉上窗帘）：妈，别看了...",
-    "visual_prompt": "破败公寓客厅，清晨，光线昏暗...",
     "characters": ["maxiaoshuai"],
     "scene": "apartment",
-    "camera": {"shot_type": "中景", "angle": "平视", "movement": "固定", "duration": 5},
-    "dialogue": [{"speaker": "maxiaoshuai", "text": "妈，别看了", "emotion": "紧张"}]
+    "camera": {"shot_type": "中景", "angle": "平视", "movement": "固定", "duration": 5}
   },
   {
     "script_segment": "（无对白的环境描写）",
-    "visual_prompt": "公寓外景，丧尸游荡",
     "characters": [],
     "scene": "street",
-    "camera": {"shot_type": "全景", "angle": "俯视", "movement": "缓慢平移", "duration": 4},
-    "dialogue": null
+    "camera": {"shot_type": "全景", "angle": "俯视", "movement": "缓慢平移", "duration": 4}
   }
 ]
 """
@@ -74,20 +70,6 @@ def map_characters(characters: list, char_map: dict) -> list:
     return result
 
 
-def map_dialogue(dialogue: list, char_map: dict) -> list:
-    """将对白中的 speaker 映射为 assets 目录名。"""
-    if not dialogue:
-        return dialogue
-    result = []
-    for d in dialogue:
-        d_copy = dict(d)
-        speaker = d_copy.get("speaker", "")
-        if speaker in char_map:
-            d_copy["speaker"] = char_map[speaker]
-        result.append(d_copy)
-    return result
-
-
 def map_scene(scene: str, scene_map: dict) -> str:
     """将剧本场景描述映射为 assets 目录名。"""
     if scene and scene in scene_map:
@@ -112,10 +94,6 @@ def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str,
     data["script_segment"] = shot_data.get("script_segment", "").strip()
     data.yaml_set_comment_before_after_key("script_segment", before="剧本片段（原文）")
 
-    # 画面描述
-    data["visual_prompt"] = shot_data.get("visual_prompt", "")
-    data.yaml_set_comment_before_after_key("visual_prompt", before="画面描述（用于关键帧生成）")
-
     # 角色引用
     characters = map_characters(shot_data.get("characters") or [], char_map)
     data["characters"] = characters if characters else []
@@ -132,24 +110,9 @@ def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str,
     cam_map["shot_type"] = camera.get("shot_type", "中景")
     cam_map["angle"] = camera.get("angle", "平视")
     cam_map["movement"] = camera.get("movement", "固定")
-    cam_map["duration"] = camera.get("duration", 10)
+    cam_map["duration"] = camera.get("duration", 15)
     data["camera"] = cam_map
     data.yaml_set_comment_before_after_key("camera", before="镜头参数")
-
-    # 对白
-    dialogue = map_dialogue(shot_data.get("dialogue"), char_map)
-    if dialogue:
-        dia_list = []
-        for d in dialogue:
-            item = CommentedMap()
-            item["speaker"] = d.get("speaker", "")
-            item["text"] = d.get("text", "")
-            item["emotion"] = d.get("emotion", "")
-            dia_list.append(item)
-        data["dialogue"] = dia_list
-    else:
-        data["dialogue"] = None
-    data.yaml_set_comment_before_after_key("dialogue", before="对白/旁白（列表，可多段）")
 
     with open(filepath, "w", encoding="utf-8") as f:
         yaml.dump(data, f)
@@ -188,9 +151,6 @@ def generate_map_files(project_root: Path, chapter: str, shots: list) -> tuple:
     for shot in shots:
         for c in shot.get("characters") or []:
             char_names.add(c)
-        for d in shot.get("dialogue") or []:
-            if d.get("speaker"):
-                char_names.add(d["speaker"])
         if shot.get("scene"):
             scene_names.add(shot["scene"])
 

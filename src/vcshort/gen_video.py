@@ -81,6 +81,30 @@ def image_to_base64(image_path: Path) -> str:
     return f"data:image/{mime};base64,{b64}"
 
 
+def audio_to_base64(audio_path: Path) -> str:
+    """将本地音频文件转为 base64 data URL。"""
+    if not audio_path.exists():
+        return None
+    suffix = audio_path.suffix.lower().lstrip(".")
+    mime_map = {"mp3": "mp3", "wav": "wav", "m4a": "mp4", "aac": "aac"}
+    mime = mime_map.get(suffix, "mp3")
+    with open(audio_path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
+    return f"data:audio/{mime};base64,{b64}"
+
+
+def find_character_voice(project_root: Path, char_name: str) -> Path | None:
+    """从 assets/characters/<char_name>/ 目录查找角色音色文件。"""
+    char_dir = project_root / "assets" / "characters" / char_name
+    if not char_dir.is_dir():
+        return None
+    for ext in (".mp3", ".wav", ".m4a", ".aac"):
+        candidate = char_dir / f"{char_name}{ext}"
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def find_character_image(project_root: Path, char_name: str, form_name: str = "默认") -> Path | None:
     """从 assets/characters/<char_name>/ 目录扫描角色图片。
     约定：默认形态为 <char_name>.png，其他形态为 <char_name>-<form>.png
@@ -114,31 +138,19 @@ def find_scene_images(project_root: Path, scene_name: str) -> list:
 
 
 def build_content(shot: dict, project_root: Path, prev_frame: Path | None = None) -> list:
-    """构建 API content 数组：文本 + 上一镜参考帧 + 角色参考图 + 场景参考图。"""
+    """构建 API content 数组：文本 + 上一镜参考帧 + 角色参考图 + 场景参考图 + 角色参考音频。"""
     content = []
 
-    # 文本提示词
-    visual_prompt = shot.get("visual_prompt", "")
     camera = shot.get("camera") or {}
-    dialogue = shot.get("dialogue") or []
-    prompt_parts = [visual_prompt]
-    # 加入对白内容
-    for d in dialogue:
-        speaker = d.get("speaker", "")
-        text = d.get("text", "")
-        emotion = d.get("emotion", "")
-        if text:
-            line = f"{speaker}说「{text}」"
-            if emotion:
-                line += f"（{emotion}）"
-            prompt_parts.append(line)
-    if camera.get("movement") and camera["movement"] != "固定":
-        prompt_parts.append(f"镜头{camera['movement']}")
-    if camera.get("shot_type"):
-        prompt_parts.append(camera["shot_type"])
-    prompt_parts.append("注意人物与周围环境比例")
-    prompt_text = "，".join(prompt_parts)
-    content.append({"type": "text", "text": prompt_text})
+    script_segment = shot.get("script_segment", "")
+
+    # 从 script_segment 解析出说话人（格式：角色名（动作）：台词）
+    import re
+    speakers_in_segment = []
+    for m in re.finditer(r'^(\S+?)（[^）]+）：', script_segment, flags=re.MULTILINE):
+        speaker = m.group(1).strip()
+        if speaker and speaker not in speakers_in_segment:
+            speakers_in_segment.append(speaker)
 
     img_index = 1
     prev_frame_index = None
@@ -195,18 +207,77 @@ def build_content(shot: dict, project_root: Path, prev_frame: Path | None = None
                 scene_indices.append(img_index)
                 img_index += 1
 
-    # 重写 prompt，用 [图N] 引用
-    if prev_frame_index or char_indices or scene_indices:
-        ref_parts = []
-        if prev_frame_index:
-            ref_parts.append(f"[图{prev_frame_index}]为上一镜结尾画面，保持连贯")
-        for char_key, idx in char_indices.items():
-            ref_parts.append(f"[图{idx}]为角色{char_key}")
-        if scene_indices:
-            idx_strs = "、".join(f"[图{i}]" for i in scene_indices)
-            ref_parts.append(f"{idx_strs}为场景")
-        ref_text = "，".join(ref_parts)
-        content[0]["text"] = f"{ref_text}。{prompt_text}"
+    # 角色参考音频（有对白的角色传入音色，让视频用该音色说对白）
+    audio_indices = {}
+    for speaker in speakers_in_segment:
+        char_name = speaker.split(":")[0] if ":" in speaker else speaker
+        voice_path = find_character_voice(project_root, char_name)
+        if voice_path:
+            audio_b64 = audio_to_base64(voice_path)
+            if audio_b64:
+                content.append({
+                    "type": "audio_url",
+                    "audio_url": {"url": audio_b64},
+                    "role": "reference_audio"
+                })
+                audio_indices[speaker] = img_index
+                img_index += 1
+                print(f"  角色 {speaker} 音色: {voice_path.name}")
+
+    # 构建提示词：素材角色指定 + 动作/剧情描述(含对白) + 镜头语言 + 氛围
+    prompt_parts = []
+
+    # 1. 素材角色指定（用 @图片N/@音频N 引用，符合 Seedance 官方写法）
+    if prev_frame_index:
+        prompt_parts.append(f"@图片{prev_frame_index}作为上一镜结尾画面，保持连贯")
+    for char_key, idx in char_indices.items():
+        prompt_parts.append(f"参考@图片{idx}的{char_key}形象")
+    if scene_indices:
+        idx_strs = "、".join(f"@图片{i}" for i in scene_indices)
+        prompt_parts.append(f"场景为{idx_strs}")
+    for speaker, idx in audio_indices.items():
+        prompt_parts.append(f"{speaker}的音色参考@音频{idx}")
+
+    # 2. 动作/剧情描述（用 script_segment 按时间线叙述，动作和对白交织在一起）
+    # script_segment 已包含动作描写和对白的先后顺序，模型能理解时间线
+    if script_segment:
+        # 把剧本片段里的「角色（动作）：台词」转为自然叙述
+        # 如 "小帅（低沉的声音从身后传来）：放下。" → 小帅低沉的声音从身后传来，说"放下。"
+        narrative = script_segment
+        # 去掉括号里的纯动作描写行的括号（如 "（林霸回头...）" → "林霸回头..."）
+        narrative = re.sub(r'\n（([^）]+)）', r'\n\1', narrative)
+        # 把 "角色（动作）：台词" 转为 "角色动作，用普通话说"台词""
+        def convert_dialogue(m):
+            speaker = m.group(1)
+            action = m.group(2) or ""
+            text = m.group(3) or ""
+            parts = []
+            if action:
+                parts.append(f"{speaker}{action}")
+            if text:
+                parts.append(f'{speaker}用普通话说"{text}"')
+            return "，".join(parts)
+        narrative = re.sub(r'^(\S+?)（([^）]+)）：(.+)$', convert_dialogue, narrative, flags=re.MULTILINE)
+        # 简化换行为逗号
+        narrative = narrative.replace("\n", "，")
+        prompt_parts.append(narrative)
+
+    # 3. 镜头语言（景别 + 运镜 + 角度，归在一起）
+    camera_parts = []
+    if camera.get("shot_type"):
+        camera_parts.append(camera["shot_type"])
+    if camera.get("angle"):
+        camera_parts.append(camera["angle"])
+    if camera.get("movement") and camera["movement"] != "固定":
+        camera_parts.append(f"镜头{camera['movement']}")
+    if camera_parts:
+        prompt_parts.append("，".join(camera_parts))
+
+    # 4. 质量约束
+    prompt_parts.append("注意人物与周围环境比例")
+
+    prompt_text = "，".join(prompt_parts)
+    content.insert(0, {"type": "text", "text": prompt_text})
 
     return content
 
@@ -217,6 +288,7 @@ def submit_video_task(content: list, config: dict, ratio: str, duration: int) ->
     api_key = api_cfg.get("api_key")
     base_url = api_cfg.get("base_url", DEFAULT_BASE_URL)
     model = api_cfg.get("video_model", DEFAULT_VIDEO_MODEL)
+    resolution = config.get("resolution", "720p")
 
     if not api_key:
         print("错误：config.yaml 中未配置 api.api_key", file=sys.stderr)
@@ -228,7 +300,7 @@ def submit_video_task(content: list, config: dict, ratio: str, duration: int) ->
         "content": content,
         "ratio": ratio,
         "duration": max(duration, 5),
-        "resolution": "720p",
+        "resolution": resolution,
         "watermark": False,
         "generate_audio": True,
     }
@@ -403,10 +475,10 @@ def main(argv=None) -> int:
     # 获取比例和时长
     raw_ratio = config.get("aspect_ratio", "9:16")
     ratio = str(raw_ratio) if raw_ratio else "9:16"
-    duration = (shot.get("camera") or {}).get("duration", 10)
-    # API 只支持 5 或 10 秒
-    if duration not in (5, 10):
-        duration = 10 if duration > 5 else 5
+    duration = (shot.get("camera") or {}).get("duration", 15)
+    # API 支持 5/10/15 秒
+    if duration not in (5, 10, 15):
+        duration = 15 if duration > 10 else (10 if duration > 5 else 5)
 
     # 提交任务
     task_id = submit_video_task(content, config, ratio, duration)

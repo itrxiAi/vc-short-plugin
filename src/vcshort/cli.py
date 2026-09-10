@@ -9,6 +9,7 @@
     config-list       列出已有资产
     extract           提取资产并匹配
     gen-image         生成图片资产
+    gen-voice         生成角色音色
     fix-image         修改图片资产
     gen-shots         拆分分镜
     gen-video         生成分镜视频
@@ -41,16 +42,29 @@ def build_parser() -> argparse.ArgumentParser:
     p_extract.add_argument("--chapter", required=True, help="章节号（如 ch01）")
     p_extract.add_argument("--confirm", action="store_true", help="用户确认后生成 map 文件")
 
-    # gen-image <项目路径> --type --name --prompt [--form] [--size] [--model] [--force]
+    # gen-image <项目路径> --type --name --prompt [--form] [--size] [--model] [--force] [--gender] [--no-voice]
     p_gen_img = sub.add_parser("gen-image", help="生成图片资产")
     p_gen_img.add_argument("project", help="项目路径")
     p_gen_img.add_argument("--type", required=True, choices=["character", "costume", "prop", "scene"], help="资产类型")
     p_gen_img.add_argument("--name", required=True, help="资产名称")
-    p_gen_img.add_argument("--prompt", required=True, help="生成提示词")
+    p_gen_img.add_argument("--prompt", default=None, help="生成提示词（角色类型可省略，读 character.yaml）")
     p_gen_img.add_argument("--size", default="2K", help="图片尺寸 (2K/3K/4K)")
     p_gen_img.add_argument("--model", default=None, help="模型 ID（默认读 config.yaml）")
     p_gen_img.add_argument("--force", action="store_true", help="覆盖同名资产")
     p_gen_img.add_argument("--form", default=None, help="角色形态名（仅 type=character）")
+    p_gen_img.add_argument("--gender", default=None, choices=["male", "female"], help="角色性别（仅 type=character，生成图片后自动生成音色）")
+    p_gen_img.add_argument("--no-voice", action="store_true", help="不自动生成音色（仅 type=character）")
+
+    # gen-voice <项目路径> --name --gender [--voice] [--instruction] [--emotion] [--emotion-scale] [--force]
+    p_gen_voice = sub.add_parser("gen-voice", help="生成角色音色")
+    p_gen_voice.add_argument("project", help="项目路径")
+    p_gen_voice.add_argument("--name", required=True, help="角色名")
+    p_gen_voice.add_argument("--gender", required=True, choices=["male", "female"], help="角色性别")
+    p_gen_voice.add_argument("--voice", help="指定音色 ID（如 zh_male_qingcang_uranus_bigtts），不指定则随机选")
+    p_gen_voice.add_argument("--instruction", help="自然语言情感指令，控制语气语调（如 \"用凶狠霸道的语气说\"）")
+    p_gen_voice.add_argument("--emotion", help="情感标签（如 angry/happy/sad），写入 audio_params.emotion")
+    p_gen_voice.add_argument("--emotion-scale", type=int, choices=range(1, 6), help="情感强度 1-5，需配合 --emotion 使用")
+    p_gen_voice.add_argument("--force", action="store_true", help="覆盖已有音色，换一个新音色")
 
     # fix-image <项目路径> --name --prompt
     p_fix_img = sub.add_parser("fix-image", help="修改图片资产")
@@ -102,7 +116,9 @@ def main(argv=None) -> int:
 
     if cmd == "gen-image":
         from . import gen_image
-        sub_argv = [args.project, "--type", args.type, "--name", args.name, "--prompt", args.prompt]
+        sub_argv = [args.project, "--type", args.type, "--name", args.name]
+        if args.prompt:
+            sub_argv += ["--prompt", args.prompt]
         if args.size:
             sub_argv += ["--size", args.size]
         if args.model:
@@ -111,7 +127,26 @@ def main(argv=None) -> int:
             sub_argv.append("--force")
         if args.form:
             sub_argv += ["--form", args.form]
+        if args.gender:
+            sub_argv += ["--gender", args.gender]
+        if args.no_voice:
+            sub_argv.append("--no-voice")
         return gen_image.main(sub_argv)
+
+    if cmd == "gen-voice":
+        from . import gen_voice
+        sub_argv = [args.project, "--name", args.name, "--gender", args.gender]
+        if args.voice:
+            sub_argv += ["--voice", args.voice]
+        if args.instruction:
+            sub_argv += ["--instruction", args.instruction]
+        if args.emotion:
+            sub_argv += ["--emotion", args.emotion]
+        if args.emotion_scale:
+            sub_argv += ["--emotion-scale", str(args.emotion_scale)]
+        if args.force:
+            sub_argv.append("--force")
+        return gen_voice.main(sub_argv)
 
     if cmd == "fix-image":
         from . import fix_image

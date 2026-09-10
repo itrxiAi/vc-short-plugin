@@ -1,6 +1,6 @@
 ---
 name: gen-image
-description: 生成图片资产（角色/服装/道具/场景），调用 doubao-seedream API 生成并保存到 assets 目录
+description: 生成图片资产（服装/道具/场景），调用 doubao-seedream API 生成并保存到 assets 目录
 allowed-tools:
   - read
   - write
@@ -15,11 +15,11 @@ triggers:
 
 # 生成图片资产
 
+> **角色生成请用 `/vc-short:gen-character`**，本工作流仅用于服装/道具/场景。
+
 ## 前置条件
 
 运行 `install.sh`（macOS/Linux）或 `install.ps1`（Windows）安装后，`vcshort` 已在 PATH 中，直接调用 `vcshort <command> ...`。
-
-## 前置条件
 
 - 项目的 `config.yaml` 中已填写 `api.api_key`（火山引擎方舟 API Key）
 - 用户已在某个视频项目目录中（含 `config.yaml` 和 `assets/` 结构）
@@ -31,12 +31,11 @@ triggers:
 | 参数 | 说明 | 示例 |
 |------|------|------|
 | **项目路径** | 项目根目录的绝对路径 | `/Users/.../末日求生` |
-| **资产类型** | `character` / `costume` / `prop` / `scene` | `character` |
-| **资产名称** | 角色名/场景名（中文，对应 assets 目录名） | `小帅` |
-| **形态名** | 角色形态名（仅 type=character，可选，默认 默认） | `女装` |
-| **提示词** | 图片生成的描述文本 | `20岁青年，短发，瘦削，穿旧夹克，动漫3D风格` |
+| **资产类型** | `costume` / `prop` / `scene` | `scene` |
+| **资产名称** | 资产名称（中文，对应 assets 目录名） | `废弃学校操场` |
+| **提示词** | 图片生成的描述文本 | `废弃学校操场，末日废墟氛围，搭满帐篷` |
 
-> **角色自动追加"全身照"**：脚本会自动在角色提示词后追加"全身照"，确保上下身一致，用户提示词中无需重复写。
+> **场景自动追加"不要出现人物"**：脚本会自动在场景提示词后追加"不要出现人物"，避免干扰后续图生视频。
 
 ## 执行步骤
 
@@ -44,14 +43,12 @@ triggers:
 
 逐个检查参数是否已提供。**任何一个缺失都必须向用户确认**，不要使用默认值。
 
-- 如果用户只说了"生成一个角色"但没给名称和提示词 → 先问名称，再问提示词
 - 如果用户没指定项目路径 → 询问是哪个项目
 
 ### 2. 检查图片是否已存在
 
 检查对应目录下是否已有同名图片文件（场景支持多张，不检查）：
 
-- **角色** → `assets/characters/<角色名>/<角色名>.png` 或 `<角色名>-<形态>.png`
 - **服装** → `assets/costumes/<服装名>.png`
 - **道具** → `assets/props/<道具名>.png`
 
@@ -69,16 +66,6 @@ vcshort gen-image <项目路径> \
   --size 2K
 ```
 
-角色多形态时追加 `--form <形态名>`：
-```bash
-vcshort gen-image <项目路径> \
-  --type character \
-  --name <角色名> \
-  --form <形态名> \
-  --prompt "<提示词>" \
-  --size 2K
-```
-
 - 如果用户要求覆盖，追加 `--force`
 - 如果 `config.yaml` 中指定了不同的 image_model，追加 `--model <模型ID>`
 
@@ -92,7 +79,6 @@ vcshort gen-image <项目路径> \
 
 | 类型参数 | 目录 | 文件命名 |
 |---------|------|---------|
-| `character` | `assets/characters/<角色名>/` | 默认形态 `<角色名>.png`，其他形态 `<角色名>-<形态>.png` |
 | `costume` | `assets/costumes/` | `<服装名>.png` |
 | `prop` | `assets/props/` | `<道具名>.png` |
 | `scene` | `assets/scenes/<场景名>/` | `<N>.png`（数字递增，支持多张） |

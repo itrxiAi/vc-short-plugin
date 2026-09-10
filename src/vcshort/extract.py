@@ -165,7 +165,7 @@ def do_confirm(project_root: Path, chapter: str) -> None:
     new_chars = 0
     new_scenes = 0
 
-    # --- 生成 character_map.yaml ---
+    # --- 生成 character_map.yaml + character.yaml ---
     char_map = CommentedMap()
     for char in extract_data.get("characters") or []:
         name = char.get("name", "")
@@ -178,6 +178,34 @@ def do_confirm(project_root: Path, chapter: str) -> None:
             print(f"  新增角色: {name}（用 /gen-image 生成图片）")
         else:
             char_map[name] = matched
+
+        # 为每个角色生成 character.yaml 档案（新角色和已匹配角色都生成）
+        # 已匹配角色若已有 character.yaml 则不覆盖
+        char_dir_name = matched if matched else name
+        if char_dir_name:
+            char_dir = project_root / "assets" / "characters" / char_dir_name
+            char_yaml_path = char_dir / "character.yaml"
+            char_dir.mkdir(parents=True, exist_ok=True)
+            if not char_yaml_path.exists():
+                char_yaml = CommentedMap()
+                char_yaml["name"] = name
+                # gender 由 LLM 在 extract.tmp.json 中提供（male/female），未提供则留空
+                char_yaml["gender"] = char.get("gender", "") or ""
+                # 用 extract.tmp.json 里的 description 填 appearance
+                char_yaml["appearance"] = char.get("description", "")
+                voice_map = CommentedMap()
+                voice_map["speaker"] = ""
+                # instruction 由 LLM 在 extract.tmp.json 中提供，未提供则留空
+                voice_map["instruction"] = char.get("instruction", "") or ""
+                char_yaml["voice"] = voice_map
+                with open(char_yaml_path, "w", encoding="utf-8") as f:
+                    f.write("# 角色档案 — 生成图片/音色时读取\n")
+                    f.write("# gender: male / female（必填，影响音色选择）\n")
+                    f.write("# appearance: 外貌描述，gen-image 用\n")
+                    f.write("# voice.speaker: 音色 ID，留空则按 gender 随机选\n")
+                    f.write("# voice.instruction: 自然语言情感指令，如 \"用凶狠霸道的语气说\"\n\n")
+                    yaml.dump(char_yaml, f)
+                print(f"  已生成档案: {char_yaml_path}")
 
     char_map_path = chapter_dir / "character_map.yaml"
     with open(char_map_path, "w", encoding="utf-8") as f:
