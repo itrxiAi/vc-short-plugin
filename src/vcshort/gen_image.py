@@ -47,9 +47,10 @@ def load_config(project_root: Path) -> dict:
 def build_prompt(user_prompt: str, style_config: dict, asset_type: str = None) -> str:
     """将用户提示词与项目风格配置拼接。"""
     parts = [user_prompt]
-    # 角色默认全身照 + 纯色背景，避免下身不一致和背景干扰
+    # 角色默认正面全身照 + 纯色背景，确保脸部可识别且便于图生视频参考
     if asset_type == "character":
-        parts.append("全身照")
+        parts.append("正面全身照")
+        parts.append("面对镜头")
         parts.append("纯白背景")
     # 场景不出现人物，避免干扰后续图生视频
     if asset_type == "scene":
@@ -63,8 +64,8 @@ def build_prompt(user_prompt: str, style_config: dict, asset_type: str = None) -
     return "，".join(parts)
 
 
-def generate_image(prompt: str, api_config: dict, size: str = "2K", model: str = None) -> str:
-    """调用 API 生成图片，返回图片 URL。"""
+def generate_image(prompt: str, api_config: dict, size: str = "2K", model: str = None, ref_images: list = None) -> str:
+    """调用 API 生成图片，返回图片 URL。ref_images 为本地图片路径列表，传入后作为参考图。"""
     api_key = api_config["api_key"]
     base_url = api_config["base_url"]
     if model is None:
@@ -79,6 +80,21 @@ def generate_image(prompt: str, api_config: dict, size: str = "2K", model: str =
         "sequential_image_generation": "disabled",
         "stream": False,
     }
+    # 参考图：本地图片转 base64 注入 images 字段
+    if ref_images:
+        import base64
+        images_b64 = []
+        for img_path in ref_images:
+            p = Path(img_path)
+            if not p.exists():
+                print(f"警告：参考图不存在，跳过: {p}", file=sys.stderr)
+                continue
+            ext = p.suffix.lstrip(".").lower()
+            mime = "jpeg" if ext in ("jpg", "jpeg") else "png"
+            b64 = base64.b64encode(p.read_bytes()).decode("utf-8")
+            images_b64.append(f"data:image/{mime};base64,{b64}")
+        if images_b64:
+            payload["images"] = images_b64
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
@@ -134,6 +150,7 @@ def main(argv=None) -> int:
     parser.add_argument("--form", default=None, help="角色形态名（仅 type=character 时使用，默认 default）")
     parser.add_argument("--gender", default=None, choices=["male", "female"], help="角色性别（仅 type=character，生成图片后自动生成音色）")
     parser.add_argument("--no-voice", action="store_true", help="不自动生成音色（仅 type=character）")
+    parser.add_argument("--ref-image", default=None, help="参考图路径（仅参考风格，形象按提示词走；多张用逗号分隔）")
     args = parser.parse_args(argv)
 
     project_root = Path(args.project).resolve()
@@ -212,7 +229,13 @@ def main(argv=None) -> int:
     print(f"模型: {model}")
     print(f"尺寸: {args.size}")
 
-    image_url = generate_image(final_prompt, api_config, size=args.size, model=model)
+    # 参考图
+    ref_images = None
+    if args.ref_image:
+        ref_images = [p.strip() for p in args.ref_image.split(",") if p.strip()]
+        print(f"参考图: {ref_images}")
+
+    image_url = generate_image(final_prompt, api_config, size=args.size, model=model, ref_images=ref_images)
     print(f"图片生成完成，正在下载...")
 
     download_image(image_url, image_path)

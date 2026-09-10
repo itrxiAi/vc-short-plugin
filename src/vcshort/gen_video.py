@@ -275,6 +275,7 @@ def build_content(shot: dict, project_root: Path, prev_frame: Path | None = None
 
     # 4. 质量约束
     prompt_parts.append("注意人物与周围环境比例")
+    prompt_parts.append("画面底部显示中文字幕")
 
     prompt_text = "，".join(prompt_parts)
     content.insert(0, {"type": "text", "text": prompt_text})

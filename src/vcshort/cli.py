@@ -54,6 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_gen_img.add_argument("--form", default=None, help="角色形态名（仅 type=character）")
     p_gen_img.add_argument("--gender", default=None, choices=["male", "female"], help="角色性别（仅 type=character，生成图片后自动生成音色）")
     p_gen_img.add_argument("--no-voice", action="store_true", help="不自动生成音色（仅 type=character）")
+    p_gen_img.add_argument("--ref-image", default=None, help="参考图路径（仅参考风格，形象按提示词走；多张用逗号分隔）")
 
     # gen-voice <项目路径> --name --gender [--voice] [--instruction] [--emotion] [--emotion-scale] [--force]
     p_gen_voice = sub.add_parser("gen-voice", help="生成角色音色")
@@ -131,6 +132,8 @@ def main(argv=None) -> int:
             sub_argv += ["--gender", args.gender]
         if args.no_voice:
             sub_argv.append("--no-voice")
+        if args.ref_image:
+            sub_argv += ["--ref-image", args.ref_image]
         return gen_image.main(sub_argv)
 
     if cmd == "gen-voice":

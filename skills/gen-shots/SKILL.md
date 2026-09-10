@@ -106,7 +106,7 @@ video: null
 ### 4. 提取角色和场景
 
 从 script_segment 中提取出场角色和场景：
-- **characters**：script_segment 中出现的所有角色名
+- **characters**：script_segment 中出现的所有角色名（**不含旁白**，`旁白：...` 是叙述者，不是角色资产）
 - **scene**：script_segment 所属的场景名
 
 ### 5. 检查分镜字数
