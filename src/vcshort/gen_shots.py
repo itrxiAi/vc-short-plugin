@@ -11,7 +11,9 @@ JSON 格式示例：
 [
   {
     "script_segment": "林浩（紧张地拉上窗帘）：妈，别看了...",
-    "characters": ["maxiaoshuai"],
+    "characters": [
+      {"name": "林浩", "position": "站在窗前"}
+    ],
     "scene": "apartment",
     "camera": {"shot_type": "中景", "angle": "平视", "movement": "固定", "duration": 5}
   },
@@ -22,6 +24,7 @@ JSON 格式示例：
     "camera": {"shot_type": "全景", "angle": "俯视", "movement": "缓慢平移", "duration": 4}
   }
 ]
+
 """
 
 import argparse
@@ -45,7 +48,8 @@ def load_character_map(project_root: Path, chapter: str) -> dict:
     yaml = YAML()
     yaml.allow_unicode = True
     with open(map_path, encoding="utf-8") as f:
-        return yaml.load(f) or {}
+        data = yaml.load(f) or {}
+    return dict(data)
 
 
 def load_scene_map(project_root: Path, chapter: str) -> dict:
@@ -56,24 +60,36 @@ def load_scene_map(project_root: Path, chapter: str) -> dict:
     yaml = YAML()
     yaml.allow_unicode = True
     with open(map_path, encoding="utf-8") as f:
-        return yaml.load(f) or {}
+        data = yaml.load(f) or {}
+    return dict(data)
+
+
+def _char_name(char_item) -> str:
+    """从角色条目中提取角色名（用于映射查找）。"""
+    return char_item.get("name", "")
 
 
 def map_characters(characters: list, char_map: dict) -> list:
-    """将剧本角色名映射为 assets 目录名。"""
+    """将剧本角色名映射为 assets 目录名，保留 position 信息。
+    输入/输出均为 dict 列表：[{"name": ..., "position": ...}]
+    """
     result = []
     for char in characters:
-        if char in char_map:
-            result.append(char_map[char])
-        else:
-            result.append(char)
+        name = char.get("name", "")
+        mapped = char_map.get(name, name)
+        out = CommentedMap()
+        out["name"] = mapped
+        position = char.get("position")
+        if position:
+            out["position"] = position
+        result.append(out)
     return result
 
 
 def map_scene(scene: str, scene_map: dict) -> str:
     """将剧本场景描述映射为 assets 目录名。"""
-    if scene and scene in scene_map:
-        return scene_map[scene]
+    if scene:
+        return scene_map.get(scene, scene)
     return scene
 
 
@@ -150,7 +166,7 @@ def generate_map_files(project_root: Path, chapter: str, shots: list) -> tuple:
     scene_names = set()
     for shot in shots:
         for c in shot.get("characters") or []:
-            char_names.add(c)
+            char_names.add(_char_name(c))
         if shot.get("scene"):
             scene_names.add(shot["scene"])
 
@@ -251,7 +267,8 @@ def main(argv=None) -> int:
 
     # 写入分镜文件（每个分镜一个文件夹）
     for i, shot_data in enumerate(shots):
-        shot_id = f"{i + 1:03d}"
+        # 优先使用 shot_data 中的 shot_id，否则自动生成
+        shot_id = shot_data.get("shot_id") or f"{i + 1:03d}_01"
         shot_dir = shots_dir / f"shot_{shot_id}"
         shot_dir.mkdir(parents=True, exist_ok=True)
         filepath = shot_dir / "shot.yaml"

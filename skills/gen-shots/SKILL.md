@@ -17,30 +17,8 @@ triggers:
 
 ## 前置条件
 
-运行 `install.sh`（macOS/Linux）或 `install.ps1`（Windows）安装后，`vcshort` 已在 PATH 中，直接调用 `vcshort <command> ...`。
-
-## 前置条件
-
-- 项目已初始化（有 `config.yaml` 和 `chapters/` 目录）
-- 该章节已执行过 `/vc-short:extract`，即 `character_map.yaml` 和 `scene_map.yaml` 已存在
-- 该章节已执行过 `/vc-short:gen-script`，即 `chapters/<章节号>/script.md` 已存在
-
-## 章节目录结构
-
-```
-chapters/ch01/
-  novel.md              # 小说原文
-  script.md             # 改编剧本（由 /vc-short:gen-script 生成）
-  character_map.yaml    # 角色映射（剧本角色名 → assets 目录名）
-  scene_map.yaml        # 场景映射（剧本场景描述 → assets 目录名）
-  shots/                # 分镜文件（本工作流生成）
-    shot_001/
-      shot.yaml         # 分镜参数
-      shot.mp4          # 生成视频（由 /vc-short:gen-video 生成）
-    shot_002/
-      shot.yaml
-      ...
-```
+- `vcshort` 已安装（运行 `install.sh`/`install.ps1`），直接调用 `vcshort <command>`
+- 项目已初始化，且该章节已执行过 `/vc-short:extract` 和 `/vc-short:gen-script`（即 `character_map.yaml`、`scene_map.yaml`、`script.md` 已存在）
 
 ## 输入参数
 
@@ -49,109 +27,103 @@ chapters/ch01/
 | **项目路径** | 项目根目录的绝对路径 | `/Users/.../末日求生` |
 | **章节号** | 章节编号 | `ch01` |
 
+## 分镜编号规则
+
+存放在 `chapters/<章节号>/shots/shot_XXX_YY/shot.yaml`：
+- `shot_001_01`、`shot_001_02` — 同一地点的连续分镜（主号 001 相同，子号递增）
+- `shot_002_01` — 下一个地点的第一个分镜
+- **同主号必须顺序生成**（后一镜需要前一镜的 last_frame 保持连贯），**不同主号可并行**
+
 ## 分镜 YAML 格式
 
-每个分镜一个文件，由 `vcshort gen-shots` 脚本统一生成，保证格式一致。存放在 `chapters/<章节号>/shots/shot_XXX/shot.yaml`：
-
 ```yaml
-# 分镜 001
-
-shot_id: "001"
+shot_id: "001_01"
 chapter: "ch01"
-
-# 剧本片段（原文）
 script_segment: |
-  对应的小说/剧本原文
-
-# 角色引用（对应 assets 目录名，支持 "角色名:形态名"）
+  对应的剧本原文
 characters:
-  - 小帅
-  - 小帅:女装
-
-# 场景引用（对应 assets 目录名）
+  - name: 小帅
+    position: 站在教室中央
+  - name: 小美
+    position: 坐在窗边
 scene: 废弃学校操场
-
-# 镜头参数
 camera:
   shot_type: "中景"
   angle: "平视"
   movement: "固定"
   duration: 15
-
-# 生成状态
 status: "pending"
 keyframe: null
 video: null
 ```
 
+- `characters`：有动作或台词的角色都必须列入（含 `name` 和 `position`），不能省略
+- `position`：从剧本动作描写和场景描述推断，同主号连续分镜的 position 应连贯
+
 ## 执行步骤
 
-### 1. 收集参数
+### 1. 读取文件
 
-- 确认项目路径
-- 确认章节号（如 `ch01`）
+读取 `script.md`、`character_map.yaml`、`scene_map.yaml`、`config.yaml`。映射文件不存在则提示用户先执行 `/vc-short:extract`。
 
-### 2. 读取剧本和映射文件
+### 2. 分析剧本，拆分分镜
 
-- 读取 `chapters/<章节号>/script.md` 获取剧本内容
-- 读取 `chapters/<章节号>/character_map.yaml` 获取角色映射
-- 读取 `chapters/<章节号>/scene_map.yaml` 获取场景映射
-- 读取 `config.yaml` 获取 style、aspect_ratio
-- 如果 `character_map.yaml` 或 `scene_map.yaml` 不存在，提示用户先执行 `/vc-short:extract`
+**默认一个场景对应一个分镜**。剧本已在 gen-script 阶段按 15 秒时长拆好，一般不需要再拆。
 
-### 3. 分析剧本，拆分分镜
+**连续分镜识别**：看 script.md 中 `【场景X：描述】` 的地点是否相同。地点相同 = 同主号子号递增；地点不同 = 新主号。
 
-分镜完全按剧本场景走，一个场景对应一个分镜。剧本已在 gen-script 阶段按 15 秒时长拆好，直接将每个场景转为一个分镜。
+**角色一致性**：同主号分镜的核心角色应保持一致，角色增减（离开/加入）必须在 script_segment 中明确交代，不能凭空出现。
 
-### 4. 提取角色和场景
+### 3. 循环迭代检查（写 YAML 前必须完成）
 
-从 script_segment 中提取出场角色和场景：
-- **characters**：script_segment 中出现的所有角色名（**不含旁白**，`旁白：...` 是叙述者，不是角色资产）
-- **scene**：script_segment 所属的场景名
+发现问题则回到第 2 步调整拆分，直至全部通过：
 
-### 5. 检查分镜字数
+**检查 1 — 时长匹配**：15 秒约需 40-60 字对白（只计台词，动作描写不计字数）。
+- < 40 字 → 合并到相邻同主号分镜；无法合并则提示重新 gen-script
+- 40-60 字 → 合适
+- \> 60 字 → 拆分为同主号子号递增，每个子分镜仍须 ≥ 40 字；无法拆分则提示重新 gen-script
 
-逐个检查拆分好的分镜，不满足则提示用户重新 gen-script：
+**检查 2 — 动作对白合理性**：动作和对白是否符合逻辑、有无矛盾（如角色已离开却突然说话）。发现矛盾对照 `novel.md` 原文核实，以原文为准。
 
-- **对白总字数检查**：低字数对白重点检查是否能撑起15s，不能则提示用户合并场景
-- **内容足够简洁**：无冗余描述，无重复信息
+**检查 3 — 角色对应合理性**：characters 列表与实际出场角色一致，同主号连续分镜角色增减合理，position 与动作描写一致。
 
-### 6. 调用脚本写入分镜文件
+**检查 4 — 分镜衔接检查**：代入观众视角，检查分镜衔接是否有难以理解的地方。发现问题从专业编导角度给出解决方案，让用户确认。
 
-LLM 将分析结果转为 JSON 数组，写入 `chapters/<章节号>/shots.json`，然后调用：
+**迭代终止**：4 项检查全部通过才进入第 4 步。
+
+### 4. 调用脚本写入分镜文件
+
+将分析结果转为 JSON 数组，写入 `chapters/<章节号>/shots.json`，然后调用：
 
 ```bash
-vcshort gen-shots <项目路径> \
-  --chapter <章节号> [--force]
+vcshort gen-shots <项目路径> --chapter <章节号> [--force]
 ```
 
-脚本会自动读取 `chapters/<章节号>/shots.json`，生成 YAML 分镜文件后删除该 JSON 文件。
+脚本读取 JSON 生成 YAML 后删除该 JSON。`characters` 用剧本角色名，`scene` 用剧本场景描述，脚本自动通过映射文件转为 assets 目录名。
 
-JSON 数组格式（`characters` 使用**剧本角色名**，`scene` 使用**剧本场景描述**，脚本会自动通过 character_map.yaml 和 scene_map.yaml 映射为 assets 目录名）：
 ```json
 [
   {
+    "shot_id": "001_01",
     "script_segment": "角色名（动作）：台词...",
-    "characters": ["角色名A", "角色名B"],
+    "characters": [
+      {"name": "角色名A", "position": "站在大殿中央"},
+      {"name": "角色名B", "position": "坐在左侧首位"}
+    ],
     "scene": "场景名",
     "camera": {"shot_type": "中景", "angle": "平视", "movement": "固定", "duration": 15}
   }
 ]
 ```
 
-- 已有分镜文件时，追加 `--force` 覆盖
-- 脚本会自动加载 `character_map.yaml` 和 `scene_map.yaml` 进行映射
+已有分镜文件时追加 `--force` 覆盖。映射不到时脚本保留原名称，可后续修改映射文件重新生成。
 
-### 7. 确认结果
+### 5. 确认结果
 
-- 列出所有生成的分镜（序号、角色、场景、时长）
-- 向用户展示分镜列表
-- 询问用户是否满意，不满意可调整
+列出所有分镜（序号、角色、场景、时长），询问用户是否满意。
 
 ## 注意事项
 
 - 分镜拆分要自然，不要把一个完整动作或对白拆到两个分镜
-- JSON 中 `characters`、`scene` 使用剧本中的原始名称，脚本自动映射
-- 如果映射文件中找不到对应关系，脚本会保留原名称，用户可后续手动修改映射文件后重新生成
-- 角色多形态：`character_map.yaml` 的值支持 `角色名:形态名` 格式（如 `小美: 小帅:女装`），映射到 assets 目录 `assets/characters/小帅/小帅-女装.png`
-- 所有 YAML 文件由脚本用 ruamel.yaml 生成，格式统一，不要手动编辑 shot YAML
+- 角色多形态：`character_map.yaml` 值支持 `角色名:形态名`（如 `小美: 小帅:女装`），映射到 `assets/characters/小帅/小帅-女装.png`
+- 所有 YAML 由脚本用 ruamel.yaml 生成，不要手动编辑 shot YAML

@@ -167,18 +167,17 @@ def build_content(shot: dict, project_root: Path, prev_frame: Path | None = None
             prev_frame_index = img_index
             img_index += 1
 
-    # 角色参考图（支持 "角色名" 或 "角色名:形态名"）
+    # 角色参考图（characters 为 dict 列表，含 name/position）
     characters = shot.get("characters") or []
     char_indices = {}
-    for char_ref in characters:
-        if ":" in char_ref:
-            char_name, form_name = char_ref.split(":", 1)
-        else:
-            char_name, form_name = char_ref, "默认"
+    char_positions = {}
+    for char_item in characters:
+        char_name = char_item.get("name", "")
+        position = char_item.get("position", "")
 
-        char_img = find_character_image(project_root, char_name, form_name)
+        char_img = find_character_image(project_root, char_name, "默认")
         if not char_img:
-            print(f"警告：未找到角色 {char_ref} 的图片（assets/characters/{char_name}/）", file=sys.stderr)
+            print(f"警告：未找到角色 {char_name} 的图片（assets/characters/{char_name}/）", file=sys.stderr)
             continue
 
         b64 = image_to_base64(char_img)
@@ -188,7 +187,9 @@ def build_content(shot: dict, project_root: Path, prev_frame: Path | None = None
                 "image_url": {"url": b64},
                 "role": "reference_image"
             })
-            char_indices[char_ref] = img_index
+            char_indices[char_name] = img_index
+            if position:
+                char_positions[char_name] = position
             img_index += 1
 
     # 场景参考图（支持多张，全部传入增加多样性）
@@ -231,7 +232,11 @@ def build_content(shot: dict, project_root: Path, prev_frame: Path | None = None
     if prev_frame_index:
         prompt_parts.append(f"@图片{prev_frame_index}作为上一镜结尾画面，保持连贯")
     for char_key, idx in char_indices.items():
-        prompt_parts.append(f"参考@图片{idx}的{char_key}形象")
+        pos = char_positions.get(char_key)
+        if pos:
+            prompt_parts.append(f"参考@图片{idx}的{char_key}形象，{pos}")
+        else:
+            prompt_parts.append(f"参考@图片{idx}的{char_key}形象")
     if scene_indices:
         idx_strs = "、".join(f"@图片{i}" for i in scene_indices)
         prompt_parts.append(f"场景为{idx_strs}")
@@ -430,12 +435,44 @@ def extract_frames(video_path: Path, shot_dir: Path) -> tuple:
 
 
 def find_prev_last_frame(project_root: Path, chapter: str, shot_num: str) -> Path | None:
-    """查找上一个分镜的 last_frame.png，用于保持分镜间连贯性。"""
-    prev_num = int(shot_num) - 1
-    if prev_num < 1:
-        return None
-    prev_shot_id = f"{prev_num:03d}"
-    prev_frame = project_root / "chapters" / chapter / "shots" / f"shot_{prev_shot_id}" / "last_frame.png"
+    """查找上一个分镜的 last_frame.png，用于保持分镜间连贯性。
+    shot_num 格式为 "主号_子号"（如 "001_02"）或纯数字（如 "001"）。
+    - 同主号的上一子号（如 001_02 → 001_01）
+    - 如果是第一个子号（如 001_01），找上一个主号的最后一个子号（如 001_01 → 002_03）
+    - 纯数字格式按原逻辑处理（001 → 000）
+    """
+    if "_" in shot_num:
+        main, sub = shot_num.split("_", 1)
+        sub_num = int(sub)
+        if sub_num > 1:
+            # 同主号上一子号
+            prev_id = f"{main}_{sub_num - 1:02d}"
+        else:
+            # 第一个子号，找上一个主号的最后一个子号
+            prev_main = int(main) - 1
+            if prev_main < 1:
+                return None
+            prev_main_str = f"{prev_main:03d}"
+            # 找上一个主号下所有子号，取最大的
+            shots_dir = project_root / "chapters" / chapter / "shots"
+            prev_subs = []
+            if shots_dir.is_dir():
+                for d in shots_dir.iterdir():
+                    if d.is_dir() and d.name.startswith(f"shot_{prev_main_str}_"):
+                        sub_part = d.name.replace(f"shot_{prev_main_str}_", "")
+                        if sub_part.isdigit():
+                            prev_subs.append(int(sub_part))
+            if not prev_subs:
+                return None
+            prev_id = f"{prev_main_str}_{max(prev_subs):02d}"
+    else:
+        # 纯数字格式（兼容旧分镜）
+        prev_num = int(shot_num) - 1
+        if prev_num < 1:
+            return None
+        prev_id = f"{prev_num:03d}"
+
+    prev_frame = project_root / "chapters" / chapter / "shots" / f"shot_{prev_id}" / "last_frame.png"
     if prev_frame.exists():
         return prev_frame
     return None
