@@ -1,6 +1,6 @@
 # 剧本约束规则
 
-本文件是剧本生成和审查的单一数据源。主 agent 生成时遵守，script-reviewer subagent 审查时对照。
+本文件是剧本生成和审查的单一数据源。script-writer subagent 生成时遵守，script-reviewer subagent 审查时对照，主 agent 合并时参考。
 
 发现矛盾一律对照 `novel.md` 原文核实，以原文为准。
 
