@@ -1,6 +1,7 @@
 ---
 name: script-reviewer
 description: 剧本全面审查，对照约束规则逐项检查场景时长、完整度、逻辑矛盾、场景切换，输出结构化问题清单
+model: glm-5-2
 allowed-tools:
   - read
   - grep

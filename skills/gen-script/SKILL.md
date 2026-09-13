@@ -93,16 +93,16 @@ LLM 将小说原文改编为短视频剧本，写入 `chapters/<章节号>/scrip
 ```
 run_subagent(
   profile="script-reviewer",
-  task="审查以下改编剧本。\n\n剧本内容：\n<粘贴 script.md 全文>"
+  task="约束规则：\n<粘贴 constraints.md 全文>\n\n剧本内容：\n<粘贴 script.md 全文>"
 )
 ```
 
-将 剧本内容传给 subagent。subagent 会逐项检查场景时长、完整度、逻辑矛盾、场景切换，输出结构化审查结果。
+将 **constraints.md 内容** 和 **剧本内容** 一起传给 subagent。subagent 有独立 context，看不到主 session 的对话历史和已读文件，必须显式传入约束规则，否则无法对照审查。subagent 会逐项检查场景时长、完整度、逻辑矛盾、场景切换，输出结构化审查结果。
 
 **处理审查结果**：
 - subagent 返回"全部通过" → 进入步骤 5
-- subagent 返回问题清单 → 根据建议修改剧本，重新启动 subagent 审查，直至通过（最多 4 轮）
-- 第 4 轮仍有问题 → 列出未解决问题，交给用户决定
+- subagent 返回问题清单 → 根据建议修改剧本，重新启动 subagent 审查，直至通过（最多 3 轮）
+- 第 3 轮仍有问题 → 列出未解决问题，交给用户决定
 
 每轮修改后更新 `script.md`，然后重新审查。
 
