@@ -1,7 +1,9 @@
-# 编译产物（PyInstaller）—— 体积巨大，不提交，用户本地 ./build.sh 生成
-bin/
+# 构建产物
 dist/
 build/
+runtime/
+pkg/
+*.zip
 
 # Python 缓存
 __pycache__/

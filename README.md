@@ -1,54 +1,58 @@
 # vc-short-plugin
 
-AI 短视频制作插件（剧本 → 资产 → 分镜 → 视频 → 合成），兼容 Devin、Claude Code、Cursor。
+AI 短视频制作插件（剧本 → 资产 → 分镜 → 视频 → 合成），支持 WorkBuddy、Devin、Claude Code、Cursor。
 
 ## 安装
 
-### macOS / Linux
+插件自带便携 Python 运行时（含全部依赖），**无需安装 Python、无需配置 PATH、无 PowerShell 依赖**。
 
-一行命令安装：
+### WorkBuddy（推荐，全程零命令行）
+
+1. 从 [Releases](https://github.com/itrxiAi/vc-short-plugin/releases) 下载对应平台的 zip：
+   - `vcshort-macos.zip`（Apple Silicon）
+   - `vcshort-windows.zip`（Windows 64 位）
+2. 解压到任意位置
+3. 打开 WorkBuddy → 技能 → 添加技能 → 上传技能包，选择解压出的 `vc-short-plugin` 目录
+4. 对话中直接使用
+
+### Devin / Claude Code / Cursor
+
+1. 下载并解压对应平台的 zip（同上）
+2. 注册到 agent（任选其一）：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/itrxiAi/vc-short-plugin/main/install.sh | bash
+# Devin CLI
+devin plugins install --local <解压目录>
+
+# Claude Code（macOS/Linux）
+ln -s <解压目录> ~/.claude/plugins/vc-short
+
+# Claude Code（Windows，cmd 管理员外也可用 junction）
+mklink /J "%USERPROFILE%\.claude\plugins\vc-short" "<解压目录>"
+
+# Cursor：将解压目录拷贝或链接到 ~/.cursor/plugins/local/vc-short
 ```
 
-### Windows
+安装完成后在 agent 对话中调用 `/vc-short:init` 等技能即可。
 
-一行命令安装（PowerShell 7+）：
+### 目录内容
 
-```powershell
-irm https://raw.githubusercontent.com/itrxiAi/vc-short-plugin/main/install.ps1 | iex
+```
+vc-short-plugin/
+├── skills/          # 11 个技能（SKILL.md）
+├── bin/vcshort      # 启动器（bash）+ vcshort.bat（Windows cmd）
+├── python/          # 便携 Python + site-packages（含 opencv、ffmpeg）
+├── src/vcshort/     # CLI 源码
+└── plugin.json      # 插件清单（WorkBuddy / Claude Code / Devin 兼容）
 ```
 
-Windows PowerShell 5.1（Windows 10 默认）对中文编码支持较差，建议安装 PowerShell 7：
-
-```powershell
-winget install Microsoft.PowerShell
-```
-
-然后用 `pwsh` 代替 `powershell` 运行上述命令。
-
-安装脚本会自动完成：
-1. 创建安装目录（`~/.vcshort/` 或 `%USERPROFILE%\.vcshort\`）
-2. 下载插件文件（skills、plugin.json 等，不需要 git）
-3. 下载对应平台的 `vcshort` 二进制
-4. 将 `vcshort` 加入 PATH
-5. 弹出菜单选择安装到 Devin / Claude Code / Cursor / 全部
-
-安装完成后重新打开终端，运行 `vcshort --help` 验证。
-
-### 本地编译（可选）
-
-如果不想下载预编译版本，可以本地编译：
+### 本地构建（可选）
 
 ```bash
 git clone https://github.com/itrxiAi/vc-short-plugin.git
 cd vc-short-plugin
-pip install -r requirements.txt
-./build.sh
+./build.sh          # 组装 mac 包到 dist/vc-short-plugin/（CI 用同样逻辑构建三平台）
 ```
-
-产物：`bin/vcshort`（单文件可执行程序，自包含 Python 运行时和所有依赖）。
 
 ## 使用
 
@@ -130,44 +134,47 @@ vc-short-plugin/
 ├── .devin-plugin/
 │   └── plugin.json          # Devin 插件清单
 ├── .claude-plugin/
-│   └── plugin.json          # Claude Code 插件清单
+│   └── plugin.json          # Claude Code / WorkBuddy 插件清单
 ├── plugin.json              # Cursor / Agent Plugins 清单
-├── skills/                  # 9 个技能
+├── skills/                  # 11 个技能
 │   ├── init/SKILL.md
 │   ├── extract/SKILL.md
+│   ├── gen-character/SKILL.md
 │   ├── gen-image/SKILL.md
 │   ├── fix-image/SKILL.md
+│   ├── gen-voice/SKILL.md
 │   ├── gen-script/SKILL.md
 │   ├── gen-shots/SKILL.md
 │   ├── gen-video/SKILL.md
 │   ├── compose-chapter/SKILL.md
 │   └── config-manager/SKILL.md
+├── agents/                  # 子代理定义
 ├── src/vcshort/             # Python CLI 源码
 │   ├── cli.py               # 主入口（subparsers 分发）
 │   ├── init.py
 │   ├── extract.py
 │   ├── gen_image.py
 │   ├── fix_image.py
+│   ├── gen_voice.py
 │   ├── gen_shots.py
 │   ├── gen_video.py
 │   ├── compose_chapter.py
 │   └── config_manager.py
-├── bin/vcshort              # 编译后的可执行文件（build.sh 生成）
-├── vcshort.spec             # PyInstaller 打包配置
-├── build.sh                 # 一键打包脚本
-├── install.sh               # 安装脚本（macOS/Linux）
-├── install.ps1              # 安装脚本（Windows）
-├── requirements.txt         # Python 依赖
+├── bin/vcshort              # 便携启动器（bash，macOS/Linux/Git Bash 通用）
+├── bin/vcshort.bat          # 便携启动器（Windows cmd）
+├── build.sh                 # 本地组装脚本（CI 同逻辑）
+├── requirements.txt         # Python 依赖（装入便携 Python）
 └── README.md
 ```
 
 ## 工作原理
 
-安装脚本将 `vcshort` 加入 PATH，SKILL.md 中直接调用 `vcshort <command>`，无需定位插件路径。
-
-`vcshort` 是用 PyInstaller 编译的单文件可执行程序，自包含 Python 运行时和所有依赖（requests、ruamel.yaml、opencv、imageio-ffmpeg），用户机器不需要装 Python 环境。
+- 插件自带便携 Python 运行时（[python-build-standalone](https://github.com/astral-sh/python-build-standalone) 官方构建），依赖在打包时装入 `python/`，用户机器**不需要装 Python 和任何依赖**
+- SKILL.md 通过 `${CODEBUDDY_SKILL_DIR}` / `${CLAUDE_PLUGIN_ROOT}` / 技能源路径定位插件根目录下的 `bin/vcshort`，无需 PATH 配置
+- `bin/vcshort`（bash）和 `bin/vcshort.bat`（cmd）启动器调用自带 Python 运行 `src/vcshort/__main__.py`
+- CI（GitHub Actions）按 tag 触发，在 macOS / Windows runner 上组装便携包并发布 zip，无编译步骤、无杀软误报风险
 
 ## 依赖
 
 - 火山引擎方舟 API Key（填入项目的 `config.yaml`）
-- `opencv-python`、`imageio-ffmpeg`（已打包进可执行文件，无需单独安装）
+- `opencv-python`、`imageio-ffmpeg`（已装入插件自带的便携 Python，无需单独安装）

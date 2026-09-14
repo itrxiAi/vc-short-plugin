@@ -17,7 +17,12 @@ triggers:
 
 ## 前置条件
 
-- `vcshort` 已安装（运行 `install.sh`/`install.ps1`），直接调用 `vcshort <command>`
+- 本插件自带 Python 运行时，无需系统安装 Python
+- `vcshort` CLI 位于插件根目录 `bin/` 下（插件根目录 = 本 SKILL.md 上两级目录）：
+  - WorkBuddy / CodeBuddy：`${CODEBUDDY_SKILL_DIR}/../../bin/vcshort`
+  - Claude Code：`${CLAUDE_PLUGIN_ROOT}/bin/vcshort`
+  - Devin / Cursor：从技能源路径取上两级目录，拼接 `bin/vcshort`
+- 下文 `vcshort <command>` 均指展开后的完整路径；Windows 也可用 `bincshort.bat`
 - 项目已初始化，且该章节已执行过 `/vc-short:extract` 和 `/vc-short:gen-script`（即 `character_map.yaml`、`scene_map.yaml`、`script.md` 已存在）
 
 ## 输入参数

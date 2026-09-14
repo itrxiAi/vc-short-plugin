@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# vcshort 便携启动器 — 使用插件自带的 Python 运行时（无需系统 Python）
+# 兼容 macOS/Linux 与 Windows Git Bash（agent 的执行环境）
+set -e
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(dirname "$DIR")"
+
+export PYTHONUTF8=1
+export PYTHONIOENCODING=utf-8
+export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
+
+# 便携 Python：Windows 布局为 python/python.exe，macOS/Linux 为 python/bin/python3
+if [ -f "$ROOT/python/python.exe" ]; then
+  PY="$ROOT/python/python.exe"
+else
+  PY="$ROOT/python/bin/python3"
+fi
+
+exec "$PY" "$ROOT/src/vcshort/__main__.py" "$@"
