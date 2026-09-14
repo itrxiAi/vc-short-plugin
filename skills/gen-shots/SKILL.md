@@ -17,12 +17,11 @@ triggers:
 
 ## 前置条件
 
-- 本插件自带 Python 运行时，无需系统安装 Python
-- `vcshort` CLI 位于插件根目录 `bin/` 下（插件根目录 = 本 SKILL.md 上两级目录）：
-  - WorkBuddy / CodeBuddy：`${CODEBUDDY_SKILL_DIR}/../../bin/vcshort`
-  - Claude Code：`${CLAUDE_PLUGIN_ROOT}/bin/vcshort`
-  - Devin / Cursor：从技能源路径取上两级目录，拼接 `bin/vcshort`
-- 下文 `vcshort <command>` 均指展开后的完整路径；Windows 也可用 `bincshort.bat`
+- `vcshort` CLI 固定安装在 `~/.vc-short/`（Windows 为 `%USERPROFILE%\.vc-short`），自带 Python 运行时，无需系统安装 Python：
+  - bash / Git Bash / macOS / Linux：`~/.vc-short/bin/vcshort <command> ...`
+  - Windows cmd / PowerShell：`%USERPROFILE%\.vc-short\bin\vcshort.bat <command> ...`
+- 下文 `vcshort <command>` 均指上述完整路径
+- 若该路径不存在：代用户安装运行时——下载 `https://github.com/itrxiAi/vc-short-plugin/releases/latest/download/vcshort-macos.zip`（Windows 用 `vcshort-windows.zip`），解压并把其中的 `vc-short-plugin` 文件夹移动为 `~/.vc-short`（Windows 为 `%USERPROFILE%\.vc-short`），装好后重试
 - 项目已初始化，且该章节已执行过 `/vc-short:extract` 和 `/vc-short:gen-script`（即 `character_map.yaml`、`scene_map.yaml`、`script.md` 已存在）
 
 ## 输入参数
@@ -83,20 +82,14 @@ video: null
 
 **角色一致性**：同主号的连续分镜必须保持同一批角色，角色增减（离开/加入）必须在 script_segment 中明确交代，不能凭空出现。若角色组发生变化，应开新主号，而不是沿用子号。
 
-### 3. 启动 shot-reviewer subagent 全面审查
+### 3. 启动 shot-reviewer 子代理全面审查
 
-主 agent 不自行检查，将分镜方案交给 `shot-reviewer` subagent 独立审查。subagent 有独立 context，不知道拆分过程，从纯第三方视角逐项检查。
+将分镜方案交给 `shot-reviewer` 子代理（本插件 `agents/` 目录提供）独立审查，审查提示词见 `agents/shot-reviewer.md`。
 
-调用方式：
+- 环境支持显式调用子代理时，传入 `constraints.md` 全文、分镜方案（JSON 数组）、剧本原文与小说原文路径
+- 环境不支持子代理时：读取 `agents/shot-reviewer.md`，主 agent 切换为演员视角，严格按其审查流程逐项自查
 
-```
-run_subagent(
-  profile="shot-reviewer",
-  task="审查以下分镜拆分方案。\n\n约束规则：\n<粘贴 constraints.md 全文>\n\n分镜方案（JSON）：\n<粘贴分镜 JSON 数组>\n\n剧本原文：<项目路径>/chapters/<章节号>/script.md\n小说原文：<项目路径>/chapters/<章节号>/novel.md"
-)
-```
-
-将 `constraints.md` 全文、分镜方案（JSON 数组）、文件路径传给 subagent。subagent 会逐项检查时长、动作对白、角色对应、衔接流畅性，输出结构化审查结果。
+子代理有独立 context，不知道拆分过程，从纯第三方视角逐项检查时长、动作对白、角色对应、衔接流畅性，输出结构化审查结果。
 
 **处理审查结果**：
 - subagent 返回"全部通过" → 进入第 4 步

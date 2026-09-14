@@ -4,33 +4,35 @@ AI 短视频制作插件（剧本 → 资产 → 分镜 → 视频 → 合成）
 
 ## 安装
 
-插件自带便携 Python 运行时（含全部依赖），**无需安装 Python、无需配置 PATH、无 PowerShell 依赖**。
+分两部分：**插件**（技能 + 子代理，各 agent 的插件机制安装）和**运行时**（`vcshort` CLI + 便携 Python，装到固定位置 `~/.vc-short/`，Windows 为 `%USERPROFILE%\.vc-short`）。技能里用固定路径引用 CLI，因此技能装到哪都不影响运行。
 
-### WorkBuddy（推荐，全程零命令行）
+插件自带便携 Python（含 opencv、ffmpeg），**无需安装 Python、无需配置 PATH**。
 
-1. 从 [Releases](https://github.com/itrxiAi/vc-short-plugin/releases) 下载对应平台的 zip：
-   - `vcshort-macos.zip`（Apple Silicon）
-   - `vcshort-windows.zip`（Windows 64 位）
-2. 解压到任意位置
-3. 打开 WorkBuddy → 技能 → 添加技能 → 上传技能包，选择解压出的 `vc-short-plugin` 目录
-4. 对话中直接使用
+### WorkBuddy
+
+1. **装插件**：WorkBuddy → 插件市场 → 添加市场 → 填入本仓库地址
+   `https://github.com/itrxiAi/vc-short-plugin` → 搜索 `vc-short` → 安装
+   （或 CLI 内：`/plugin marketplace add itrxiAi/vc-short-plugin` → `/plugin install vc-short@vc-short`）
+2. **装运行时**：从 [Releases](https://github.com/itrxiAi/vc-short-plugin/releases) 下载平台对应的 zip（`vcshort-macos.zip` / `vcshort-windows.zip`），解压后把 `vc-short-plugin` 文件夹重命名为 `.vc-short` 放到用户主目录
+   - 也可以跳过这步：首次使用技能时，agent 会检测到 `~/.vc-short` 缺失并自动下载安装
+3. 对话中使用：`/vc-short:init 项目名` 或直接说「帮我把这本小说做成短视频」
 
 ### Devin / Claude Code / Cursor
 
-1. 下载并解压对应平台的 zip（同上）
-2. 注册到 agent（任选其一）：
+1. **装运行时**（同上）：下载 zip → 解压 → `vc-short-plugin` 重命名为 `.vc-short` 放到用户主目录
+2. **注册插件**（指向 `~/.vc-short` 或仓库克隆目录）：
 
 ```bash
 # Devin CLI
-devin plugins install --local <解压目录>
+devin plugins install --local ~/.vc-short
 
 # Claude Code（macOS/Linux）
-ln -s <解压目录> ~/.claude/plugins/vc-short
+ln -s ~/.vc-short ~/.claude/plugins/vc-short
 
-# Claude Code（Windows，cmd 管理员外也可用 junction）
-mklink /J "%USERPROFILE%\.claude\plugins\vc-short" "<解压目录>"
+# Claude Code（Windows，cmd）
+mklink /J "%USERPROFILE%\.claude\plugins\vc-short" "%USERPROFILE%\.vc-short"
 
-# Cursor：将解压目录拷贝或链接到 ~/.cursor/plugins/local/vc-short
+# Cursor：将 ~/.vc-short 拷贝或链接到 ~/.cursor/plugins/local/vc-short
 ```
 
 安装完成后在 agent 对话中调用 `/vc-short:init` 等技能即可。
@@ -40,9 +42,11 @@ mklink /J "%USERPROFILE%\.claude\plugins\vc-short" "<解压目录>"
 ```
 vc-short-plugin/
 ├── skills/          # 11 个技能（SKILL.md）
+├── agents/          # 子代理（script-reviewer、shot-reviewer）
 ├── bin/vcshort      # 启动器（bash）+ vcshort.bat（Windows cmd）
 ├── python/          # 便携 Python + site-packages（含 opencv、ffmpeg）
 ├── src/vcshort/     # CLI 源码
+├── .codebuddy-plugin/marketplace.json   # WorkBuddy/CodeBuddy 插件市场清单
 └── plugin.json      # 插件清单（WorkBuddy / Claude Code / Devin 兼容）
 ```
 

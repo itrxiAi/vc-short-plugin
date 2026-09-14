@@ -83,7 +83,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p pkg/vc-short-plugin/bin
-          cp -r skills src agents plugin.json AGENTS.md .claude-plugin .devin-plugin pkg/vc-short-plugin/
+          cp -r skills src agents plugin.json AGENTS.md .claude-plugin .devin-plugin .codebuddy-plugin pkg/vc-short-plugin/
           cp bin/vcshort bin/vcshort.bat pkg/vc-short-plugin/bin/
           cp -r runtime/python pkg/vc-short-plugin/python
           chmod +x pkg/vc-short-plugin/bin/vcshort
@@ -104,7 +104,7 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then
-            ditto -c -k --keepParent pkg/vc-short-plugin "${{ matrix.artifact }}.zip"
+            (cd pkg && zip -qry "../${{ matrix.artifact }}.zip" vc-short-plugin)
           else
             (cd pkg && tar -a -c -f "../${{ matrix.artifact }}.zip" vc-short-plugin)
           fi

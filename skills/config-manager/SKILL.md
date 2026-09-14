@@ -13,12 +13,11 @@ triggers:
 
 ## 前置条件
 
-- 本插件自带 Python 运行时，无需系统安装 Python
-- `vcshort` CLI 位于插件根目录 `bin/` 下（插件根目录 = 本 SKILL.md 上两级目录）：
-  - WorkBuddy / CodeBuddy：`${CODEBUDDY_SKILL_DIR}/../../bin/vcshort`
-  - Claude Code：`${CLAUDE_PLUGIN_ROOT}/bin/vcshort`
-  - Devin / Cursor：从技能源路径取上两级目录，拼接 `bin/vcshort`
-- 下文 `vcshort <command>` 均指展开后的完整路径；Windows 也可用 `bincshort.bat`
+- `vcshort` CLI 固定安装在 `~/.vc-short/`（Windows 为 `%USERPROFILE%\.vc-short`），自带 Python 运行时，无需系统安装 Python：
+  - bash / Git Bash / macOS / Linux：`~/.vc-short/bin/vcshort <command> ...`
+  - Windows cmd / PowerShell：`%USERPROFILE%\.vc-short\bin\vcshort.bat <command> ...`
+- 下文 `vcshort <command>` 均指上述完整路径
+- 若该路径不存在：代用户安装运行时——下载 `https://github.com/itrxiAi/vc-short-plugin/releases/latest/download/vcshort-macos.zip`（Windows 用 `vcshort-windows.zip`），解压并把其中的 `vc-short-plugin` 文件夹移动为 `~/.vc-short`（Windows 为 `%USERPROFILE%\.vc-short`），装好后重试
 
 ## 用途
 

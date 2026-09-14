@@ -84,20 +84,14 @@ LLM 将小说原文改编为短视频剧本，写入 `chapters/<章节号>/scrip
   - 不要把一个完整动作或对白拆到两个场景
   - 内容不够撑起 15s 的场景应合并到相邻场景
 
-### 4. 启动 script-reviewer subagent 全面审查
+### 4. 启动 script-reviewer 子代理全面审查
 
-主 agent 不自行检查，将剧本交给 `script-reviewer` subagent 独立审查。subagent 有独立 context，不知道改编过程，从纯第三方视角逐项检查。
+将剧本交给 `script-reviewer` 子代理（本插件 `agents/` 目录提供）独立审查，审查提示词见 `agents/script-reviewer.md`。
 
-调用方式：
+- 环境支持显式调用子代理时，传入 **constraints.md 全文** 和 **script.md 全文**（子代理有独立 context，看不到主 session 的对话历史和已读文件，必须显式传入约束规则，否则无法对照审查）
+- 环境不支持子代理时：读取 `agents/script-reviewer.md`，主 agent 切换为纯第三方视角，严格按其审查流程逐项自查
 
-```
-run_subagent(
-  profile="script-reviewer",
-  task="约束规则：\n<粘贴 constraints.md 全文>\n\n剧本内容：\n<粘贴 script.md 全文>"
-)
-```
-
-将 **constraints.md 内容** 和 **剧本内容** 一起传给 subagent。subagent 有独立 context，看不到主 session 的对话历史和已读文件，必须显式传入约束规则，否则无法对照审查。subagent 会逐项检查场景时长、完整度、逻辑矛盾、场景切换，输出结构化审查结果。
+子代理会逐项检查场景时长、完整度、逻辑矛盾、场景切换，输出结构化审查结果。
 
 **处理审查结果**：
 - subagent 返回"全部通过" → 进入步骤 5
