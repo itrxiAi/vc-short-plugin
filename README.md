@@ -101,8 +101,9 @@ pip install -r requirements.txt
 读取剧本和映射文件，拆分为多个 10 秒分镜，写入 YAML。**产物：**
 
 - `chapters/<章节号>/shots.json` — 临时 JSON（脚本消费后删除）
-- `chapters/<章节号>/shots/shot_001/shot.yaml` — 分镜参数（`visual_prompt`、`characters`、`scene`、`camera`、`dialogue`、`status: pending`）
-- `chapters/<章节号>/shots/shot_002/shot.yaml` … 依次递增
+- `chapters/<章节号>/shots/shot_001_01/shot.yaml` — 分镜参数（`script_segment`、`characters`、`scene`、`camera`、`status: pending`）
+- `chapters/<章节号>/shots/shot_001_02/shot.yaml` — 同主号 = 「同一地点 + 同一批角色」的连续分镜，子号递增
+- `chapters/<章节号>/shots/shot_002_01/shot.yaml` — 地点或角色组变化后开新主号
 
 ### `/vc-short:gen-video` — 生成分镜视频
 
