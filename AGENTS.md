@@ -19,7 +19,8 @@
 5. `/vc-short:gen-voice` 重新生成角色音色（不满意时用）
 6. `/vc-short:gen-script` 改编剧本
 7. `/vc-short:gen-shots` 拆分分镜
-8. `/vc-short:gen-video` 生成分镜视频
-9. `/vc-short:compose-chapter` 合成章节视频
+8. `/vc-short:gen-keyframe` 生成分镜首帧图（确认满意后再生成视频，避免一次确认同时产生图片+视频两笔费用）
+9. `/vc-short:gen-video` 生成分镜视频（自动使用已确认的首帧图）
+10. `/vc-short:compose-chapter` 合成章节视频
 
 每一步完成后都要让用户确认，不要跳步。

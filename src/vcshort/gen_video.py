@@ -619,8 +619,6 @@ def main(argv=None) -> int:
     parser.add_argument("project", help="项目路径")
     parser.add_argument("--chapter", required=True, help="章节号（如 ch01）")
     parser.add_argument("--shot", required=True, help="分镜号（如 001）")
-    parser.add_argument("--with-keyframe", action="store_true",
-                        help="首帧图缺失时按 keyframe_prompt 自动生成（调用图片 API，额外花费）")
     args = parser.parse_args(argv)
 
     project_root = Path(args.project).resolve()
@@ -639,22 +637,24 @@ def main(argv=None) -> int:
         print(f"分镜 {args.shot} 已有视频: {video_path}")
         return 0
 
-    # 冻结首帧图：已存在直接用；--with-keyframe 时按 keyframe_prompt 生成
+    # 冻结首帧图：分镜目录下有 keyframe.png 则作为起始画面参考图
+    # 首帧图由独立命令 /vc-short:gen-keyframe 生成，本命令不再自动生成
     keyframe_image = shot_dir / "keyframe.png"
-    if not keyframe_image.exists() and args.with_keyframe:
-        keyframe_image = ensure_keyframe(shot, project_root, config, shot_dir) or None
-    if keyframe_image and keyframe_image.exists():
+    if keyframe_image.exists():
         print(f"使用首帧图: {keyframe_image}")
+    else:
+        keyframe_image = None
+        print("提示：无首帧图，将回退用上一镜尾帧或纯文本提示词（建议先用 /vc-short:gen-keyframe 生成首帧图）", file=sys.stderr)
 
     # 查找上一镜的最后一帧（保持连贯性；有首帧图时不传，首帧图即本镜起点）
     prev_frame = None
-    if not (keyframe_image and keyframe_image.exists()):
+    if not keyframe_image:
         prev_frame = find_prev_last_frame(project_root, args.chapter, args.shot)
         if prev_frame:
             print(f"使用上一镜参考帧: {prev_frame}")
 
     # 构建 content
-    content = build_content(shot, project_root, prev_frame, keyframe_image if keyframe_image and keyframe_image.exists() else None)
+    content = build_content(shot, project_root, prev_frame, keyframe_image)
     print(f"参考图数量: {len([c for c in content if c['type'] == 'image_url'])}")
 
     # 获取比例和时长

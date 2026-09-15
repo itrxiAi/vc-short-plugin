@@ -12,6 +12,7 @@
     gen-voice         生成角色音色
     fix-image         修改图片资产
     gen-shots         拆分分镜
+    gen-keyframe      生成分镜首帧图
     gen-video         生成分镜视频
     compose-chapter   合成章节视频
 """
@@ -78,6 +79,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_gen_shots.add_argument("project", help="项目路径")
     p_gen_shots.add_argument("--chapter", required=True, help="章节号（如 ch01）")
     p_gen_shots.add_argument("--force", action="store_true", help="覆盖已有分镜文件")
+
+    # gen-keyframe <项目路径> --chapter --shot [--force]
+    p_gen_keyframe = sub.add_parser("gen-keyframe", help="生成分镜首帧图")
+    p_gen_keyframe.add_argument("project", help="项目路径")
+    p_gen_keyframe.add_argument("--chapter", required=True, help="章节号（如 ch01）")
+    p_gen_keyframe.add_argument("--shot", required=True, help="分镜号（如 001_01 或 001）")
+    p_gen_keyframe.add_argument("--force", action="store_true", help="覆盖已有 keyframe.png")
 
     # gen-video <项目路径> --chapter --shot
     p_gen_video = sub.add_parser("gen-video", help="生成分镜视频")
@@ -162,6 +170,13 @@ def main(argv=None) -> int:
         if args.force:
             sub_argv.append("--force")
         return gen_shots.main(sub_argv)
+
+    if cmd == "gen-keyframe":
+        from . import gen_keyframe
+        sub_argv = [args.project, "--chapter", args.chapter, "--shot", args.shot]
+        if args.force:
+            sub_argv.append("--force")
+        return gen_keyframe.main(sub_argv)
 
     if cmd == "gen-video":
         from . import gen_video
