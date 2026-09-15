@@ -2,17 +2,18 @@
 """分镜生成视频 — 从 shot YAML 生成视频
 
 用法：
-  vcshort gen-video <项目路径> --chapter <章节号> --shot <分镜号>
+  vcshort gen-video <项目路径> --chapter <章节号> --shot <分镜号> [--with-keyframe]
 
 示例：
   vcshort gen-video /path/to/project --chapter ch01 --shot 001
 
 流程：
-  1. 读取 shot YAML（shot_id, visual_prompt, characters, scene, camera）
-  2. 从 assets 目录扫描角色和场景的图片（约定优于配置）
-  3. 将本地图片转 base64，作为 reference_image 传给视频生成 API
-  4. 轮询任务直到完成，下载视频
-  5. 更新 shot YAML 的 video 字段和 status
+  1. 读取 shot YAML（shot_id, source, purpose, script_segment(声音), action, keyframe_prompt, end_state, characters, scene, camera）
+  2. 首帧控制：分镜目录下有 keyframe.png 则作为起始画面参考图；--with-keyframe 时按 keyframe_prompt 自动生成
+  3. 从 assets 目录扫描角色和场景的图片（约定优于配置）
+  4. 将参考图转 base64，作为 reference_image 传给视频生成 API
+  5. 轮询任务直到完成，下载视频
+  6. 更新 shot YAML 的 video 字段和 status
 """
 
 import argparse
@@ -137,8 +138,22 @@ def find_scene_images(project_root: Path, scene_name: str) -> list:
     return sorted(imgs, key=lambda p: int(p.stem) if p.stem.isdigit() else p.stem)
 
 
-def build_content(shot: dict, project_root: Path, prev_frame: Path | None = None) -> list:
-    """构建 API content 数组：文本 + 上一镜参考帧 + 角色参考图 + 场景参考图 + 角色参考音频。"""
+def find_prop_image(project_root: Path, prop_name: str) -> Path | None:
+    """从 assets/props/<prop_name>/ 目录扫描道具图片。"""
+    prop_dir = project_root / "assets" / "props" / prop_name
+    if not prop_dir.is_dir():
+        return None
+    # 优先 <prop_name>.png
+    candidate = prop_dir / f"{prop_name}.png"
+    if candidate.exists():
+        return candidate
+    # 兜底：目录下任意图片
+    imgs = [p for p in prop_dir.iterdir() if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")]
+    return imgs[0] if imgs else None
+
+
+def build_content(shot: dict, project_root: Path, prev_frame: Path | None = None, keyframe_image: Path | None = None) -> list:
+    """构建 API content 数组：文本 + 首帧图/上一镜参考帧 + 角色参考图 + 场景参考图 + 角色参考音频。"""
     content = []
 
     camera = shot.get("camera") or {}
@@ -153,10 +168,23 @@ def build_content(shot: dict, project_root: Path, prev_frame: Path | None = None
             speakers_in_segment.append(speaker)
 
     img_index = 1
+    keyframe_index = None
     prev_frame_index = None
 
-    # 上一镜最后一帧（保持连贯性）
-    if prev_frame:
+    # 冻结首帧图（优先）：keyframe.png 即本镜起点画面，已包含与上一镜的连贯性
+    if keyframe_image:
+        b64 = image_to_base64(keyframe_image)
+        if b64:
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": b64},
+                "role": "reference_image"
+            })
+            keyframe_index = img_index
+            img_index += 1
+
+    # 上一镜最后一帧（保持连贯性；有首帧图时不再传，首帧图即本镜起点）
+    if prev_frame and not keyframe_image:
         b64 = image_to_base64(prev_frame)
         if b64:
             content.append({
@@ -208,6 +236,26 @@ def build_content(shot: dict, project_root: Path, prev_frame: Path | None = None
                 scene_indices.append(img_index)
                 img_index += 1
 
+    # 道具参考图（本镜出现的道具，传图保持视觉一致）
+    prop_indices = {}
+    for prop_item in shot.get("props") or []:
+        prop_name = prop_item.get("name", "") if isinstance(prop_item, dict) else prop_item
+        if not prop_name:
+            continue
+        prop_img = find_prop_image(project_root, prop_name)
+        if not prop_img:
+            print(f"提示：未找到道具 {prop_name} 的图片（assets/props/{prop_name}/）", file=sys.stderr)
+            continue
+        b64 = image_to_base64(prop_img)
+        if b64:
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": b64},
+                "role": "reference_image"
+            })
+            prop_indices[prop_name] = img_index
+            img_index += 1
+
     # 角色参考音频（有对白的角色传入音色，让视频用该音色说对白）
     audio_indices = {}
     for speaker in speakers_in_segment:
@@ -229,6 +277,8 @@ def build_content(shot: dict, project_root: Path, prev_frame: Path | None = None
     prompt_parts = []
 
     # 1. 素材角色指定（用 @图片N/@音频N 引用，符合 Seedance 官方写法）
+    if keyframe_index:
+        prompt_parts.append(f"@图片{keyframe_index}作为本镜起始画面")
     if prev_frame_index:
         prompt_parts.append(f"@图片{prev_frame_index}作为上一镜结尾画面，保持连贯")
     for char_key, idx in char_indices.items():
@@ -240,32 +290,46 @@ def build_content(shot: dict, project_root: Path, prev_frame: Path | None = None
     if scene_indices:
         idx_strs = "、".join(f"@图片{i}" for i in scene_indices)
         prompt_parts.append(f"场景为{idx_strs}")
+    for prop_name, idx in prop_indices.items():
+        prompt_parts.append(f"参考@图片{idx}的{prop_name}外观")
     for speaker, idx in audio_indices.items():
         prompt_parts.append(f"{speaker}的音色参考@音频{idx}")
 
-    # 2. 动作/剧情描述（用 script_segment 按时间线叙述，动作和对白交织在一起）
-    # script_segment 已包含动作描写和对白的先后顺序，模型能理解时间线
-    if script_segment:
-        # 把剧本片段里的「角色（动作）：台词」转为自然叙述
-        # 如 "小帅（低沉的声音从身后传来）：放下。" → 小帅低沉的声音从身后传来，说"放下。"
-        narrative = script_segment
-        # 去掉括号里的纯动作描写行的括号（如 "（林霸回头...）" → "林霸回头..."）
-        narrative = re.sub(r'\n（([^）]+)）', r'\n\1', narrative)
-        # 把 "角色（动作）：台词" 转为 "角色动作，用普通话说"台词""
-        def convert_dialogue(m):
-            speaker = m.group(1)
-            action = m.group(2) or ""
-            text = m.group(3) or ""
-            parts = []
-            if action:
-                parts.append(f"{speaker}{action}")
-            if text:
-                parts.append(f'{speaker}用普通话说"{text}"')
-            return "，".join(parts)
-        narrative = re.sub(r'^(\S+?)（([^）]+)）：(.+)$', convert_dialogue, narrative, flags=re.MULTILINE)
-        # 简化换行为逗号
-        narrative = narrative.replace("\n", "，")
-        prompt_parts.append(narrative)
+    # 1.5 起始画面描述：有上一镜尾图时以图为准，不传 keyframe_prompt（避免文图冲突）；
+    # 有首帧图或无任何起始图（文本兜底）时用首帧提示词描述起点
+    keyframe_prompt = (shot.get("keyframe_prompt") or "").strip()
+    if prev_frame_index:
+        prompt_parts.append(f"起始画面参考@图片{prev_frame_index}，从该画面状态开始演")
+    elif keyframe_prompt:
+        prompt_parts.append(f"起始画面：{keyframe_prompt}")
+
+    # 2. 动作/剧情描述（action 状态链 + script_segment 声音，按时间线叙述）
+    action = (shot.get("action") or "").strip()
+    if action or script_segment:
+        narrative_parts = []
+        # 先写动作状态链（唯一动作：起点→终点的可见状态转换）
+        if action:
+            narrative_parts.append(action)
+        # 再写声音（对白/声音），转为自然叙述
+        if script_segment:
+            seg = script_segment
+            # 去掉括号里的纯动作描写行的括号
+            seg = re.sub(r'\n（([^）]+)）', r'\n\1', seg)
+            # 把 "角色（动作）：台词" 转为 "角色动作，用普通话说"台词""
+            def convert_dialogue(m):
+                speaker = m.group(1)
+                act = m.group(2) or ""
+                text = m.group(3) or ""
+                parts = []
+                if act:
+                    parts.append(f"{speaker}{act}")
+                if text:
+                    parts.append(f'{speaker}用普通话说"{text}"')
+                return "，".join(parts)
+            seg = re.sub(r'^(\S+?)（([^）]+)）：(.+)$', convert_dialogue, seg, flags=re.MULTILINE)
+            seg = seg.replace("\n", "，")
+            narrative_parts.append(seg)
+        prompt_parts.append("，".join(narrative_parts))
 
     # 3. 镜头语言（景别 + 运镜 + 角度，归在一起）
     camera_parts = []
@@ -319,7 +383,18 @@ def submit_video_task(content: list, config: dict, ratio: str, duration: int) ->
     print(f"模型: {model}")
     print(f"比例: {ratio}，时长: {max(duration, 5)}s")
 
-    resp = requests.post(endpoint, json=payload, headers=headers, timeout=60)
+    last_err = None
+    for attempt in range(3):
+        try:
+            resp = requests.post(endpoint, json=payload, headers=headers, timeout=(60, 300))
+            break
+        except requests.exceptions.RequestException as e:
+            last_err = e
+            print(f"提交请求失败（第 {attempt + 1} 次）：{e}，5 秒后重试...", file=sys.stderr)
+            time.sleep(5)
+    else:
+        print(f"提交失败：重试 3 次仍超时/出错: {last_err}", file=sys.stderr)
+        sys.exit(1)
     if resp.status_code != 200:
         print(f"提交失败 ({resp.status_code}): {resp.text}", file=sys.stderr)
         sys.exit(1)
@@ -478,11 +553,74 @@ def find_prev_last_frame(project_root: Path, chapter: str, shot_num: str) -> Pat
     return None
 
 
+def ensure_keyframe(shot: dict, project_root: Path, config: dict, shot_dir: Path) -> Path | None:
+    """按 keyframe_prompt 生成首帧图（keyframe.png），已存在则直接返回。
+
+    参考图：本镜角色图 + 场景图，保身份和地理。生成失败不阻断视频流程。
+    """
+    keyframe_path = shot_dir / "keyframe.png"
+    if keyframe_path.exists():
+        return keyframe_path
+
+    keyframe_prompt = (shot.get("keyframe_prompt") or "").strip()
+    if not keyframe_prompt:
+        print("提示：shot YAML 无 keyframe_prompt，跳过首帧图生成", file=sys.stderr)
+        return None
+
+    from .gen_image import generate_image, download_image, DEFAULT_BASE_URL, DEFAULT_MODEL
+
+    api_cfg = config.get("api") or {}
+    if not api_cfg.get("api_key"):
+        print("警告：未配置 api.api_key，跳过首帧图生成", file=sys.stderr)
+        return None
+    api_config = {
+        "api_key": api_cfg.get("api_key"),
+        "base_url": api_cfg.get("base_url", DEFAULT_BASE_URL),
+        "image_model": api_cfg.get("image_model", DEFAULT_MODEL),
+    }
+
+    # 参考图：角色图（保身份）+ 首张场景图（保地理）
+    ref_images = []
+    for char_item in shot.get("characters") or []:
+        char_name = char_item.get("name", "")
+        char_name = char_name.split(":")[0] if ":" in char_name else char_name
+        img = find_character_image(project_root, char_name, "默认")
+        if img:
+            ref_images.append(str(img))
+    scene_key = shot.get("scene")
+    if scene_key:
+        scene_imgs = find_scene_images(project_root, scene_key)
+        if scene_imgs:
+            ref_images.append(str(scene_imgs[0]))
+
+    style = config.get("style")
+    aspect = config.get("aspect_ratio")
+    parts = [keyframe_prompt, "视频首帧，画面定格瞬间"]
+    if style:
+        parts.append(f"{style}风格")
+    if aspect:
+        parts.append(f"{aspect}构图")
+    final_prompt = "，".join(parts)
+
+    print("正在生成首帧图...")
+    print(f"提示词: {final_prompt}")
+    try:
+        image_url = generate_image(final_prompt, api_config, size="2K", ref_images=ref_images or None)
+        download_image(image_url, keyframe_path)
+    except SystemExit:
+        print("警告：首帧图生成失败，继续用文本提示词生成视频", file=sys.stderr)
+        return None
+    print(f"已保存首帧图: {keyframe_path}")
+    return keyframe_path
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="vcshort gen-video", description="从分镜生成视频")
     parser.add_argument("project", help="项目路径")
     parser.add_argument("--chapter", required=True, help="章节号（如 ch01）")
     parser.add_argument("--shot", required=True, help="分镜号（如 001）")
+    parser.add_argument("--with-keyframe", action="store_true",
+                        help="首帧图缺失时按 keyframe_prompt 自动生成（调用图片 API，额外花费）")
     args = parser.parse_args(argv)
 
     project_root = Path(args.project).resolve()
@@ -501,13 +639,22 @@ def main(argv=None) -> int:
         print(f"分镜 {args.shot} 已有视频: {video_path}")
         return 0
 
-    # 查找上一镜的最后一帧（保持连贯性）
-    prev_frame = find_prev_last_frame(project_root, args.chapter, args.shot)
-    if prev_frame:
-        print(f"使用上一镜参考帧: {prev_frame}")
+    # 冻结首帧图：已存在直接用；--with-keyframe 时按 keyframe_prompt 生成
+    keyframe_image = shot_dir / "keyframe.png"
+    if not keyframe_image.exists() and args.with_keyframe:
+        keyframe_image = ensure_keyframe(shot, project_root, config, shot_dir) or None
+    if keyframe_image and keyframe_image.exists():
+        print(f"使用首帧图: {keyframe_image}")
+
+    # 查找上一镜的最后一帧（保持连贯性；有首帧图时不传，首帧图即本镜起点）
+    prev_frame = None
+    if not (keyframe_image and keyframe_image.exists()):
+        prev_frame = find_prev_last_frame(project_root, args.chapter, args.shot)
+        if prev_frame:
+            print(f"使用上一镜参考帧: {prev_frame}")
 
     # 构建 content
-    content = build_content(shot, project_root, prev_frame)
+    content = build_content(shot, project_root, prev_frame, keyframe_image if keyframe_image and keyframe_image.exists() else None)
     print(f"参考图数量: {len([c for c in content if c['type'] == 'image_url'])}")
 
     # 获取比例和时长

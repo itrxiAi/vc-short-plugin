@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""资产提取 — 从章节小说原文提取角色/场景，与 assets 目录匹配
+"""资产提取 — 从剧本提取角色/场景/道具，与 assets 目录匹配
 
 用法：
   # 第一步：匹配，生成 tmp 文件（含 matched 字段，供用户确认）
@@ -9,16 +9,18 @@
   vcshort extract <项目路径> --chapter <章节号> --confirm
 
 流程：
-  1. LLM 分析 novel.md，生成 extract.tmp.json（角色/场景 + 描述）
-  2. extract 读取 extract.tmp.json，与 assets 目录已有资产匹配，写回 matched 字段
-  3. LLM 展示匹配结果，用户逐个确认（填已有 key / 留空注册新的 / 删掉跳过）
-  4. LLM 更新 extract.tmp.json 中的 matched 字段
-  5. extract --confirm 读取 extract.tmp.json，生成 map 文件，删除 tmp
+  1. LLM 读 script.md 提取角色/场景/道具清单，缺描述时 grep novel.md 搜名字+前后N行补描述
+  2. LLM 生成 extract.tmp.json（characters + scenes + props + 描述）
+  3. extract 读取 extract.tmp.json，与 assets 目录已有资产匹配，写回 matched 字段
+  4. LLM 展示匹配结果，用户逐个确认（填已有 key / 留空注册新的 / 删掉跳过）
+  5. LLM 更新 extract.tmp.json 中的 matched 字段
+  6. extract --confirm 读取 extract.tmp.json，生成 map 文件 + asset yaml，删除 tmp
 
 约定：
-  - 角色资产目录：assets/characters/<角色名>/
-  - 场景资产目录：assets/scenes/<场景名>/
-  - 不再往 config.yaml 注册角色/场景，图片路径由目录约定推断
+  - 角色资产目录：assets/characters/<角色名>/character.yaml
+  - 场景资产目录：assets/scenes/<场景名>/scene.yaml
+  - 道具资产目录：assets/props/<道具名>/prop.yaml
+  - 不再往 config.yaml 注册资产，图片路径由目录约定推断
 """
 
 import argparse
@@ -50,6 +52,14 @@ def scan_existing_scenes(project_root: Path) -> list:
     return sorted([d.name for d in scene_dir.iterdir() if d.is_dir() and not d.name.startswith(".")])
 
 
+def scan_existing_props(project_root: Path) -> list:
+    """扫描 assets/props/ 目录，返回已有道具名列表。"""
+    prop_dir = project_root / "assets" / "props"
+    if not prop_dir.is_dir():
+        return []
+    return sorted([d.name for d in prop_dir.iterdir() if d.is_dir() and not d.name.startswith(".")])
+
+
 def fuzzy_match(name: str, keys) -> str:
     """精确匹配 + 模糊匹配（包含关系）。"""
     if name in keys:
@@ -74,6 +84,7 @@ def do_match(project_root: Path, chapter: str) -> None:
 
     existing_chars = scan_existing_characters(project_root)
     existing_scenes = scan_existing_scenes(project_root)
+    existing_props = scan_existing_props(project_root)
 
     # 匹配角色
     for char in extract_data.get("characters") or []:
@@ -105,6 +116,11 @@ def do_match(project_root: Path, chapter: str) -> None:
         name = scene.get("name", "")
         scene["matched"] = fuzzy_match(name, existing_scenes)
 
+    # 匹配道具
+    for prop in extract_data.get("props") or []:
+        name = prop.get("name", "")
+        prop["matched"] = fuzzy_match(name, existing_props)
+
     # 写回 extract.tmp.json
     with open(extract_json_path, "w", encoding="utf-8") as f:
         json.dump(extract_data, f, ensure_ascii=False, indent=2)
@@ -130,12 +146,20 @@ def do_match(project_root: Path, chapter: str) -> None:
         status = f"→ {matched} ✅" if matched else "❌ 未匹配"
         print(f"  {name} {status}")
 
+    print("\n道具:")
+    for prop in extract_data.get("props") or []:
+        name = prop.get("name", "")
+        matched = prop.get("matched", "")
+        status = f"→ {matched} ✅" if matched else "❌ 未匹配"
+        print(f"  {name} {status}")
+
     unmatched_chars = sum(1 for c in (extract_data.get("characters") or []) if not c.get("matched"))
     unmatched_scenes = sum(1 for s in (extract_data.get("scenes") or []) if not s.get("matched"))
-    total = unmatched_chars + unmatched_scenes
+    unmatched_props = sum(1 for p in (extract_data.get("props") or []) if not p.get("matched"))
+    total = unmatched_chars + unmatched_scenes + unmatched_props
 
     if total:
-        print(f"\n⚠️  {total} 个未匹配（角色 {unmatched_chars}，场景 {unmatched_scenes}）")
+        print(f"\n⚠️  {total} 个未匹配（角色 {unmatched_chars}，场景 {unmatched_scenes}，道具 {unmatched_props}）")
         print("请确认 extract.tmp.json 中的 matched 字段：")
         print("  - 填入已有的 assets 目录名进行手动匹配")
         print('  - 保持空字符串 "" 则注册为新资产（用 /gen-image 生成图片即可）')
@@ -209,12 +233,12 @@ def do_confirm(project_root: Path, chapter: str) -> None:
 
     char_map_path = chapter_dir / "character_map.yaml"
     with open(char_map_path, "w", encoding="utf-8") as f:
-        f.write("# 角色映射 — 小说角色名 → assets 目录名\n")
+        f.write("# 角色映射 — 剧本角色名 → assets 目录名\n")
         f.write("# 支持多形态：值填 角色名:形态名（如 小帅:女装）\n\n")
         yaml.dump(char_map, f)
     print(f"已生成: {char_map_path}")
 
-    # --- 生成 scene_map.yaml ---
+    # --- 生成 scene_map.yaml + scene.yaml ---
     scene_map = CommentedMap()
     for scene in extract_data.get("scenes") or []:
         name = scene.get("name", "")
@@ -228,20 +252,76 @@ def do_confirm(project_root: Path, chapter: str) -> None:
         else:
             scene_map[name] = matched
 
+        # 为每个场景生成 scene.yaml 档案（已存在则不覆盖）
+        scene_dir_name = matched if matched else name
+        if scene_dir_name:
+            scene_dir = project_root / "assets" / "scenes" / scene_dir_name
+            scene_yaml_path = scene_dir / "scene.yaml"
+            scene_dir.mkdir(parents=True, exist_ok=True)
+            if not scene_yaml_path.exists():
+                scene_yaml = CommentedMap()
+                scene_yaml["name"] = name
+                scene_yaml["description"] = scene.get("description", "") or ""
+                with open(scene_yaml_path, "w", encoding="utf-8") as f:
+                    f.write("# 场景档案 — 生成图片时读取\n")
+                    f.write("# description: 场景描述，gen-image 用\n\n")
+                    yaml.dump(scene_yaml, f)
+                print(f"  已生成档案: {scene_yaml_path}")
+
     scene_map_path = chapter_dir / "scene_map.yaml"
     with open(scene_map_path, "w", encoding="utf-8") as f:
-        f.write("# 场景映射 — 小说场景描述 → assets 目录名\n\n")
+        f.write("# 场景映射 — 剧本场景描述 → assets 目录名\n\n")
         yaml.dump(scene_map, f)
     print(f"已生成: {scene_map_path}")
 
-    total = new_chars + new_scenes
+    # --- 生成 prop_map.yaml + prop.yaml ---
+    new_props = 0
+    prop_map = CommentedMap()
+    for prop in extract_data.get("props") or []:
+        name = prop.get("name", "")
+        matched = prop.get("matched", "")
+
+        if not matched and name:
+            # 新道具：用道具名作为 assets 目录名，映射到自身
+            prop_map[name] = name
+            new_props += 1
+            print(f"  新增道具: {name}（用 /gen-image 生成图片）")
+        else:
+            prop_map[name] = matched
+
+        # 为每个道具生成 prop.yaml 档案（已存在则不覆盖）
+        prop_dir_name = matched if matched else name
+        if prop_dir_name:
+            prop_dir = project_root / "assets" / "props" / prop_dir_name
+            prop_yaml_path = prop_dir / "prop.yaml"
+            prop_dir.mkdir(parents=True, exist_ok=True)
+            if not prop_yaml_path.exists():
+                prop_yaml = CommentedMap()
+                prop_yaml["name"] = name
+                prop_yaml["description"] = prop.get("description", "") or ""
+                prop_yaml["owner"] = prop.get("owner", "") or ""
+                with open(prop_yaml_path, "w", encoding="utf-8") as f:
+                    f.write("# 道具档案 — 生成图片和跨镜连续性跟踪用\n")
+                    f.write("# description: 道具描述，gen-image 用\n")
+                    f.write("# owner: 持有者角色名，可为空（公共道具）\n\n")
+                    yaml.dump(prop_yaml, f)
+                print(f"  已生成档案: {prop_yaml_path}")
+
+    prop_map_path = chapter_dir / "prop_map.yaml"
+    with open(prop_map_path, "w", encoding="utf-8") as f:
+        f.write("# 道具映射 — 剧本道具名 → assets 目录名\n\n")
+        yaml.dump(prop_map, f)
+    print(f"已生成: {prop_map_path}")
+
+    total = new_chars + new_scenes + new_props
     print(f"\n✅ 完成")
-    print(f"   新增资产: {total}（角色 +{new_chars}，场景 +{new_scenes}）")
-    print(f"   map 文件: {char_map_path}, {scene_map_path}")
+    print(f"   新增资产: {total}（角色 +{new_chars}，场景 +{new_scenes}，道具 +{new_props}）")
+    print(f"   map 文件: {char_map_path}, {scene_map_path}, {prop_map_path}")
     if total:
         print("\n新增资产需要用 /gen-image 生成图片：")
         print("  角色：/gen-image --type character --name <角色名> --form <形态名> --prompt \"<描述>\"")
         print("  场景：/gen-image --type scene --name <场景名> --prompt \"<描述>\"")
+        print("  道具：/gen-image --type prop --name <道具名> --prompt \"<描述>\"")
 
     # 删除 tmp 文件
     extract_json_path.unlink()
@@ -249,7 +329,7 @@ def do_confirm(project_root: Path, chapter: str) -> None:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(prog="vcshort extract", description="从小说原文提取资产并与 assets 目录匹配")
+    parser = argparse.ArgumentParser(prog="vcshort extract", description="从剧本提取资产（角色/场景/道具）并与 assets 目录匹配")
     parser.add_argument("project", help="项目路径")
     parser.add_argument("--chapter", required=True, help="章节号（如 ch01）")
     parser.add_argument("--confirm", action="store_true", help="用户确认后，生成 map 文件")

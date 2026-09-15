@@ -47,11 +47,15 @@ def load_config(project_root: Path) -> dict:
 def build_prompt(user_prompt: str, style_config: dict, asset_type: str = None) -> str:
     """将用户提示词与项目风格配置拼接。"""
     parts = [user_prompt]
-    # 角色默认正面全身照 + 纯色背景，确保脸部可识别且便于图生视频参考
+    # 角色默认三视图设定图（正面/侧面/背面拼接在一张图里）+ 纯白背景，
+    # 确保各角度身份一致，便于图生视频在不同景别/机位时保持角色一致
     if asset_type == "character":
-        parts.append("正面全身照")
-        parts.append("面对镜头")
+        parts.append("角色三视图设定图")
+        parts.append("从左到右依次为正面全身、侧面全身、背面全身，三个角度在同一张图里并排展示")
+        parts.append("同一角色，服装发型完全一致")
         parts.append("纯白背景")
+        # 防写实：脸部过度写实会被视频 API 审核判定为真人（InputImageSensitiveContentDetected）
+        parts.append("面部卡通风格化，五官适度简化，皮肤无真实毛孔纹理，非写实，非真人照片感")
     # 场景不出现人物，避免干扰后续图生视频
     if asset_type == "scene":
         parts.append("不要出现人物")
@@ -80,7 +84,7 @@ def generate_image(prompt: str, api_config: dict, size: str = "2K", model: str =
         "sequential_image_generation": "disabled",
         "stream": False,
     }
-    # 参考图：本地图片转 base64 注入 images 字段
+    # 参考图：本地图片转 base64 注入 image 字段（seedream 多图融合用 image，不是 images）
     if ref_images:
         import base64
         images_b64 = []
@@ -94,7 +98,7 @@ def generate_image(prompt: str, api_config: dict, size: str = "2K", model: str =
             b64 = base64.b64encode(p.read_bytes()).decode("utf-8")
             images_b64.append(f"data:image/{mime};base64,{b64}")
         if images_b64:
-            payload["images"] = images_b64
+            payload["image"] = images_b64
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
@@ -221,7 +225,11 @@ def main(argv=None) -> int:
     model = args.model or api_config.get("image_model", DEFAULT_MODEL)
 
     # 拼接提示词
-    final_prompt = build_prompt(effective_prompt if args.type == "character" else args.prompt, style_config, args.type)
+    final_prompt = build_prompt(
+        effective_prompt if args.type == "character" else args.prompt,
+        style_config,
+        args.type,
+    )
 
     # 生成图片
     print(f"正在生成 {args.type} 图片: {args.name}")

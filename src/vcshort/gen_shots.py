@@ -1,34 +1,36 @@
 #!/usr/bin/env python3
-"""分镜拆分 — 将章节文本拆分为多个分镜 YAML 文件
+"""分镜拆分 — 从 Markdown 分镜文档生成 shot YAML 文件
 
 用法：
   vcshort gen-shots <项目路径> --chapter <章节号> [--force]
 
-LLM 分析章节文本后，将分镜数据以 JSON 形式写入 chapters/<章节号>/shots.json，
-本脚本负责写入格式一致的 YAML 文件。
+LLM 按 drama 风格直接写 chapters/<章节号>/shots.md（## SHOT-XXX 块），
+本脚本解析该 Markdown，生成 gen-video 消费的 shot YAML。
 
-JSON 格式示例：
-[
-  {
-    "script_segment": "林浩（紧张地拉上窗帘）：妈，别看了...",
-    "characters": [
-      {"name": "林浩", "position": "站在窗前"}
-    ],
-    "scene": "apartment",
-    "camera": {"shot_type": "中景", "angle": "平视", "movement": "固定", "duration": 5}
-  },
-  {
-    "script_segment": "（无对白的环境描写）",
-    "characters": [],
-    "scene": "street",
-    "camera": {"shot_type": "全景", "angle": "俯视", "movement": "缓慢平移", "duration": 4}
-  }
-]
+Markdown 分镜块格式：
+  ## SHOT-001-01
 
+  - 来源：SC001
+  - 职责：展示...
+  - 时长：10
+  - 景别：中景
+  - 机位：平视·固定
+  - 角色：陈青源@大殿中央, 姚素素@左侧首位
+  - 场景：玄青宗大殿
+  - 唯一动作：陈青源逐一回应质疑
+  - 终点：陈青源站定，师姐们神色各异
+
+  ### 声音
+  陈青源（拱手）：各位师姐，我确实是陈青源。
+
+  ### 冻结关键帧提示词
+  黑衣青年陈青源站在大殿中央，四周师姐围立
+
+SHOT 编号：场序-镜序（如 1-1、2-3），解析后归一为 001_01、002_03。
 """
 
 import argparse
-import json
+import re
 import sys
 from pathlib import Path
 
@@ -40,8 +42,9 @@ except ImportError:
     sys.exit(1)
 
 
+# ---------- 映射文件 ----------
+
 def load_character_map(project_root: Path, chapter: str) -> dict:
-    """加载章节角色映射文件。"""
     map_path = project_root / "chapters" / chapter / "character_map.yaml"
     if not map_path.exists():
         return {}
@@ -53,7 +56,6 @@ def load_character_map(project_root: Path, chapter: str) -> dict:
 
 
 def load_scene_map(project_root: Path, chapter: str) -> dict:
-    """加载章节场景映射文件。"""
     map_path = project_root / "chapters" / chapter / "scene_map.yaml"
     if not map_path.exists():
         return {}
@@ -64,15 +66,22 @@ def load_scene_map(project_root: Path, chapter: str) -> dict:
     return dict(data)
 
 
+def load_prop_map(project_root: Path, chapter: str) -> dict:
+    map_path = project_root / "chapters" / chapter / "prop_map.yaml"
+    if not map_path.exists():
+        return {}
+    yaml = YAML()
+    yaml.allow_unicode = True
+    with open(map_path, encoding="utf-8") as f:
+        data = yaml.load(f) or {}
+    return dict(data)
+
+
 def _char_name(char_item) -> str:
-    """从角色条目中提取角色名（用于映射查找）。"""
     return char_item.get("name", "")
 
 
 def map_characters(characters: list, char_map: dict) -> list:
-    """将剧本角色名映射为 assets 目录名，保留 position 信息。
-    输入/输出均为 dict 列表：[{"name": ..., "position": ...}]
-    """
     result = []
     for char in characters:
         name = char.get("name", "")
@@ -87,14 +96,203 @@ def map_characters(characters: list, char_map: dict) -> list:
 
 
 def map_scene(scene: str, scene_map: dict) -> str:
-    """将剧本场景描述映射为 assets 目录名。"""
     if scene:
         return scene_map.get(scene, scene)
     return scene
 
 
-def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str, char_map: dict, scene_map: dict) -> None:
-    """写入单个分镜 YAML 文件，用 ruamel.yaml 保证格式一致。"""
+def map_props(props: list, prop_map: dict) -> list:
+    """将剧本道具名映射为 assets 目录名。
+
+    输入：["玉镯", "信件"] 或 [{"name": "玉镯", "state": "在陈青源手中"}]
+    输出：[{"name": "玉镯", "state": "..."}]（name 映射后）
+    """
+    result = []
+    for prop in props or []:
+        if isinstance(prop, str):
+            name = prop
+            state = ""
+        else:
+            name = prop.get("name", "")
+            state = prop.get("state", "")
+        mapped = prop_map.get(name, name)
+        out = CommentedMap()
+        out["name"] = mapped
+        if state:
+            out["state"] = state
+        result.append(out)
+    return result
+
+
+# ---------- Markdown 解析 ----------
+
+SHOT_HEADER_RE = re.compile(r"^##\s+SHOT-(\d+)-(\d+)\s*$", re.MULTILINE)
+SUBHEAD_RE = re.compile(r"^###\s+(.+?)\s*$", re.MULTILINE)
+
+
+def parse_characters(field_value: str) -> list:
+    """解析 '角色名@位置, 角色名@位置' 为 [{"name":..., "position":...}]。"""
+    result = []
+    for item in field_value.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if "@" in item:
+            name, position = item.split("@", 1)
+            result.append({"name": name.strip(), "position": position.strip()})
+        else:
+            result.append({"name": item, "position": ""})
+    return result
+
+
+def parse_camera(shot_type: str, placement: str, duration: str) -> dict:
+    """解析景别、机位、时长为 camera dict。
+
+    机位格式 '平视·固定' → angle=平视, movement=固定；
+    单词 '平视' → angle=平视, movement=固定（默认）。
+    """
+    angle = "平视"
+    movement = "固定"
+    if placement:
+        if "·" in placement:
+            parts = [p.strip() for p in placement.split("·")]
+            angle = parts[0] or angle
+            if len(parts) > 1 and parts[1]:
+                movement = parts[1]
+        else:
+            angle = placement.strip() or angle
+    try:
+        dur = int(duration) if duration else 15
+    except ValueError:
+        dur = 15
+    if dur not in (5, 10, 15):
+        # 归一到最接近的合法档
+        dur = 15 if dur > 10 else (10 if dur > 5 else 5)
+    return {"shot_type": shot_type or "中景", "angle": angle, "movement": movement, "duration": dur}
+
+
+def parse_shot_block(block: str, shot_num: tuple, start_line: int) -> dict:
+    """解析单个 SHOT 块，返回 shot_data dict。
+
+    shot_num=(场序, 镜序) 用于生成 shot_id。
+    start_line 是该块在原文中的起始行号，用于报错定位。
+    """
+    scene_idx, shot_idx = shot_num
+    shot_id = f"{scene_idx:03d}_{shot_idx:02d}"
+
+    # 分离 bullet 区和子标题区
+    lines = block.split("\n")
+    bullets = {}
+    sub_sections = {}  # 子标题 → 内容行列表
+    current_sub = None
+    current_lines = []
+
+    for line in lines:
+        sub_m = re.match(r"^###\s+(.+?)\s*$", line)
+        if sub_m:
+            if current_sub:
+                sub_sections[current_sub] = current_lines
+            current_sub = sub_m.group(1).strip()
+            current_lines = []
+            continue
+        if current_sub is not None:
+            current_lines.append(line)
+        else:
+            # bullet 行
+            m = re.match(r"^-\s+(.+?)：\s*(.*)$", line)
+            if m:
+                key = m.group(1).strip()
+                val = m.group(2).strip()
+                bullets[key] = val
+    if current_sub:
+        sub_sections[current_sub] = current_lines
+
+    # 提取子标题内容（去首尾空行）
+    def get_sub(name):
+        for key in sub_sections:
+            if name in key:
+                body = "\n".join(sub_sections[key]).strip("\n")
+                return body.strip()
+        return ""
+
+    script_segment = get_sub("声音")
+    keyframe_prompt = get_sub("冻结关键帧提示词")
+
+    # 解析角色
+    characters = parse_characters(bullets.get("角色", ""))
+
+    # 解析道具（格式：玉镯@陈青源手中, 信件@未拆封；「无」等占位词视为没有道具）
+    props = []
+    for item in bullets.get("道具", "").split(","):
+        item = item.strip()
+        if not item or item in ("无", "无道具", "无道具。", "none", "None", "-"):
+            continue
+        if "@" in item:
+            pname, pstate = item.split("@", 1)
+            props.append({"name": pname.strip(), "state": pstate.strip()})
+        else:
+            props.append({"name": item, "state": ""})
+
+    # 解析 camera
+    camera = parse_camera(
+        shot_type=bullets.get("景别", ""),
+        placement=bullets.get("机位", ""),
+        duration=bullets.get("时长", ""),
+    )
+
+    shot_data = {
+        "shot_id": shot_id,
+        "source": bullets.get("来源", ""),
+        "purpose": bullets.get("职责", ""),
+        "script_segment": script_segment,
+        "action": bullets.get("唯一动作", ""),
+        "keyframe_prompt": keyframe_prompt,
+        "end_state": bullets.get("终点", ""),
+        "characters": characters,
+        "props": props,
+        "scene": bullets.get("场景", ""),
+        "camera": camera,
+    }
+
+    # 校验必填字段
+    required = ["职责", "唯一动作"]
+    missing = [k for k in required if not bullets.get(k)]
+    if missing:
+        print(f"错误：SHOT-{scene_idx}-{shot_idx}（第 {start_line} 行附近）缺少必填字段：{', '.join(missing)}", file=sys.stderr)
+        return None
+    if not keyframe_prompt:
+        print(f"警告：SHOT-{scene_idx}-{shot_idx} 缺少「冻结关键帧提示词」子标题", file=sys.stderr)
+
+    return shot_data
+
+
+def parse_storyboard(md_text: str) -> list:
+    """解析整个分镜 Markdown，返回 shot_data 列表（按出现顺序）。"""
+    shots = []
+    # 找所有 SHOT 标题位置
+    headers = list(SHOT_HEADER_RE.finditer(md_text))
+    if not headers:
+        print("错误：未找到任何 ## SHOT-XXX-XX 块", file=sys.stderr)
+        return shots
+
+    # 计算每个块的起始行号
+    for i, m in enumerate(headers):
+        scene_idx = int(m.group(1))
+        shot_idx = int(m.group(2))
+        start_pos = m.end()
+        end_pos = headers[i + 1].start() if i + 1 < len(headers) else len(md_text)
+        block = md_text[start_pos:end_pos].strip()
+        start_line = md_text[:m.start()].count("\n") + 1
+        shot = parse_shot_block(block, (scene_idx, shot_idx), start_line)
+        if shot is None:
+            continue
+        shots.append(shot)
+    return shots
+
+
+# ---------- YAML 写入 ----------
+
+def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str, char_map: dict, scene_map: dict, prop_map: dict) -> None:
     yaml = YAML()
     yaml.allow_unicode = True
     yaml.default_flow_style = False
@@ -106,9 +304,29 @@ def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str,
     data["chapter"] = chapter
     data.yaml_set_comment_before_after_key("shot_id", before=f"分镜 {shot_id}")
 
-    # 剧本片段
+    # 来源（场景 ID + 短引文，追溯用）
+    data["source"] = shot_data.get("source", "").strip()
+    data.yaml_set_comment_before_after_key("source", before="来源（场景 ID + 短引文）")
+
+    # 镜头职责
+    data["purpose"] = shot_data.get("purpose", "").strip()
+    data.yaml_set_comment_before_after_key("purpose", before="镜头职责（本镜结束时观众知道了什么变化）")
+
+    # 声音（对白/声音，视频模型用）
     data["script_segment"] = shot_data.get("script_segment", "").strip()
-    data.yaml_set_comment_before_after_key("script_segment", before="剧本片段（原文）")
+    data.yaml_set_comment_before_after_key("script_segment", before="声音（对白/声音，视频模型消费）")
+
+    # 唯一动作（状态链，视频模型用）
+    data["action"] = shot_data.get("action", "").strip()
+    data.yaml_set_comment_before_after_key("action", before="唯一动作（起点→终点状态链）")
+
+    # 冻结首帧提示词
+    data["keyframe_prompt"] = shot_data.get("keyframe_prompt", "").strip()
+    data.yaml_set_comment_before_after_key("keyframe_prompt", before="冻结首帧提示词（只投影起点，删终点才有的内容）")
+
+    # 终点状态
+    data["end_state"] = shot_data.get("end_state", "").strip()
+    data.yaml_set_comment_before_after_key("end_state", before="终点状态（下一镜起点须与此一致）")
 
     # 角色引用
     characters = map_characters(shot_data.get("characters") or [], char_map)
@@ -120,6 +338,11 @@ def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str,
     data["scene"] = scene if scene else None
     data.yaml_set_comment_before_after_key("scene", before="场景引用（对应 assets 目录名）")
 
+    # 道具引用
+    props = map_props(shot_data.get("props") or [], prop_map)
+    data["props"] = props if props else []
+    data.yaml_set_comment_before_after_key("props", before="道具引用（对应 assets 目录名，含本镜状态）")
+
     # 镜头参数
     camera = shot_data.get("camera") or {}
     cam_map = CommentedMap()
@@ -130,12 +353,18 @@ def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str,
     data["camera"] = cam_map
     data.yaml_set_comment_before_after_key("camera", before="镜头参数")
 
+    # 状态字段
+    data["status"] = "pending"
+    data["keyframe"] = None
+    data["video"] = None
+
     with open(filepath, "w", encoding="utf-8") as f:
         yaml.dump(data, f)
 
 
+# ---------- 映射文件生成 ----------
+
 def scan_existing_characters(project_root: Path) -> list:
-    """扫描 assets/characters/ 目录，返回已有角色名列表。"""
     char_dir = project_root / "assets" / "characters"
     if not char_dir.is_dir():
         return []
@@ -143,17 +372,20 @@ def scan_existing_characters(project_root: Path) -> list:
 
 
 def scan_existing_scenes(project_root: Path) -> list:
-    """扫描 assets/scenes/ 目录，返回已有场景名列表。"""
     scene_dir = project_root / "assets" / "scenes"
     if not scene_dir.is_dir():
         return []
     return [d.name for d in scene_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
 
 
+def scan_existing_props(project_root: Path) -> list:
+    prop_dir = project_root / "assets" / "props"
+    if not prop_dir.is_dir():
+        return []
+    return [d.name for d in prop_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
+
+
 def generate_map_files(project_root: Path, chapter: str, shots: list) -> tuple:
-    """从 shots.json 和 assets 目录自动生成 character_map.yaml 和 scene_map.yaml。
-    返回 (char_map, scene_map)。
-    """
     yaml = YAML()
     yaml.allow_unicode = True
     yaml.default_flow_style = False
@@ -161,24 +393,26 @@ def generate_map_files(project_root: Path, chapter: str, shots: list) -> tuple:
 
     chapter_dir = project_root / "chapters" / chapter
 
-    # 收集 shots.json 中出现的所有角色名和场景名
     char_names = set()
     scene_names = set()
+    prop_names = set()
     for shot in shots:
         for c in shot.get("characters") or []:
             char_names.add(_char_name(c))
         if shot.get("scene"):
             scene_names.add(shot["scene"])
+        for p in shot.get("props") or []:
+            if isinstance(p, str):
+                prop_names.add(p)
+            else:
+                prop_names.add(p.get("name", ""))
 
-    # 生成角色映射：尝试从 assets 目录匹配
     existing_chars = scan_existing_characters(project_root)
     char_map = CommentedMap()
     for name in sorted(char_names):
-        # 精确匹配角色名
         if name in existing_chars:
             char_map[name] = name
         else:
-            # 未匹配，留空让用户手动填
             char_map[name] = ""
     char_map_path = chapter_dir / "character_map.yaml"
     with open(char_map_path, "w", encoding="utf-8") as f:
@@ -188,7 +422,6 @@ def generate_map_files(project_root: Path, chapter: str, shots: list) -> tuple:
         yaml.dump(char_map, f)
     print(f"已生成角色映射: {char_map_path}")
 
-    # 生成场景映射
     existing_scenes = scan_existing_scenes(project_root)
     scene_map = CommentedMap()
     for name in sorted(scene_names):
@@ -203,11 +436,30 @@ def generate_map_files(project_root: Path, chapter: str, shots: list) -> tuple:
         yaml.dump(scene_map, f)
     print(f"已生成场景映射: {scene_map_path}")
 
-    return dict(char_map), dict(scene_map)
+    # 生成道具映射
+    existing_props = scan_existing_props(project_root)
+    prop_map = CommentedMap()
+    for name in sorted(prop_names):
+        if not name:
+            continue
+        if name in existing_props:
+            prop_map[name] = name
+        else:
+            prop_map[name] = ""
+    prop_map_path = chapter_dir / "prop_map.yaml"
+    with open(prop_map_path, "w", encoding="utf-8") as f:
+        f.write("# 道具映射 — 剧本道具名 → assets 目录名\n")
+        f.write("# 未填的请手动补充\n\n")
+        yaml.dump(prop_map, f)
+    print(f"已生成道具映射: {prop_map_path}")
 
+    return dict(char_map), dict(scene_map), dict(prop_map)
+
+
+# ---------- 主流程 ----------
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(prog="vcshort gen-shots", description="拆分分镜，生成 YAML 文件")
+    parser = argparse.ArgumentParser(prog="vcshort gen-shots", description="从 Markdown 分镜生成 shot YAML")
     parser.add_argument("project", help="项目路径")
     parser.add_argument("--chapter", required=True, help="章节号（如 ch01）")
     parser.add_argument("--force", action="store_true", help="覆盖已有分镜文件")
@@ -222,62 +474,63 @@ def main(argv=None) -> int:
     shots_dir = chapter_dir / "shots"
     shots_dir.mkdir(parents=True, exist_ok=True)
 
-    # 自动读取 shots.json
-    shots_json_path = chapter_dir / "shots.json"
-    if not shots_json_path.exists():
-        print(f"错误：找不到 {shots_json_path}，请先生成分镜数据 JSON 文件", file=sys.stderr)
+    # 读取 Markdown 分镜文档
+    md_path = chapter_dir / "shots.md"
+    if not md_path.exists():
+        print(f"错误：找不到 {md_path}，请先用 gen-shots 技能写 Markdown 分镜文档", file=sys.stderr)
         return 1
 
-    # 加载 config.yaml（仅用于检查项目有效性）
+    md_text = md_path.read_text(encoding="utf-8")
+    shots = parse_storyboard(md_text)
+    if not shots:
+        print("错误：未解析到任何分镜，请检查 shots.md 格式（需 ## SHOT-XXX-XX 块）", file=sys.stderr)
+        return 1
+    print(f"已解析 {len(shots)} 个分镜")
+
+    # 加载 config.yaml
     config_path = project_root / "config.yaml"
     if not config_path.exists():
         print(f"错误：config.yaml 不存在: {config_path}", file=sys.stderr)
         return 1
 
-    try:
-        with open(shots_json_path, encoding="utf-8") as f:
-            shots = json.load(f)
-    except json.JSONDecodeError as e:
-        print(f"错误：JSON 解析失败: {e}", file=sys.stderr)
-        return 1
-
-    # 加载角色和场景映射（不存在则自动生成）
+    # 加载映射文件（不存在则自动生成）
     char_map_path = chapter_dir / "character_map.yaml"
     scene_map_path = chapter_dir / "scene_map.yaml"
-    if not char_map_path.exists() or not scene_map_path.exists():
-        char_map, scene_map = generate_map_files(project_root, args.chapter, shots)
+    prop_map_path = chapter_dir / "prop_map.yaml"
+    if not char_map_path.exists() or not scene_map_path.exists() or not prop_map_path.exists():
+        char_map, scene_map, prop_map = generate_map_files(project_root, args.chapter, shots)
     else:
         char_map = load_character_map(project_root, args.chapter)
         scene_map = load_scene_map(project_root, args.chapter)
+        prop_map = load_prop_map(project_root, args.chapter)
     if char_map:
         print(f"已加载角色映射: {char_map}")
     if scene_map:
         print(f"已加载场景映射: {scene_map}")
-
-    if not isinstance(shots, list) or not shots:
-        print("错误：shots-json 必须是非空数组", file=sys.stderr)
-        return 1
+    if prop_map:
+        print(f"已加载道具映射: {prop_map}")
 
     # 检查已有文件
     if not args.force:
-        existing = list(shots_dir.glob("shot_*/shot_*.yaml"))
+        existing = list(shots_dir.glob("shot_*/shot.yaml"))
         if existing:
             print(f"错误：{shots_dir} 下已有分镜文件。使用 --force 覆盖。", file=sys.stderr)
             return 1
 
-    # 写入分镜文件（每个分镜一个文件夹）
-    for i, shot_data in enumerate(shots):
-        # 优先使用 shot_data 中的 shot_id，否则自动生成
-        shot_id = shot_data.get("shot_id") or f"{i + 1:03d}_01"
+    # 写入分镜 YAML
+    for shot_data in shots:
+        shot_id = shot_data["shot_id"]
         shot_dir = shots_dir / f"shot_{shot_id}"
         shot_dir.mkdir(parents=True, exist_ok=True)
         filepath = shot_dir / "shot.yaml"
-        write_shot_yaml(filepath, shot_data, shot_id, args.chapter, char_map, scene_map)
+        write_shot_yaml(filepath, shot_data, shot_id, args.chapter, char_map, scene_map, prop_map)
         print(f"已生成: {filepath}")
-
-    # 生成成功后删除 shots.json
-    shots_json_path.unlink()
 
     print(f"\n✅ 共生成 {len(shots)} 个分镜")
     print(f"   目录: {shots_dir}")
+    print(f"   分镜文档保留: {md_path}")
     return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

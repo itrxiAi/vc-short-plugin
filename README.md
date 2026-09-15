@@ -42,7 +42,7 @@ mklink /J "%USERPROFILE%\.claude\plugins\vc-short" "%USERPROFILE%\.vc-short"
 ```
 vc-short-plugin/
 ├── skills/          # 11 个技能（SKILL.md）
-├── agents/          # 子代理（script-reviewer、shot-reviewer）
+├── agents/          # 子代理（script-reviewer）
 ├── bin/vcshort      # 启动器（bash）+ vcshort.bat（Windows cmd）
 ├── python/          # 便携 Python + site-packages（含 opencv、ffmpeg）
 ├── src/vcshort/     # CLI 源码
@@ -72,13 +72,17 @@ cd vc-short-plugin
 
 执行后需手动把小说原文放到 `chapters/ch01/novel.md`，再进入下一步。
 
-### `/vc-short:extract` — 提取角色/场景
+### `/vc-short:extract` — 提取角色/场景/道具
 
-从 `chapters/<章节号>/novel.md` 提取角色和场景，与已有 `assets/` 目录匹配，用户确认后生成映射。**产物：**
+从 `chapters/<章节号>/script.md` 提取角色、场景和道具，缺描述时按需 grep `novel.md` 搜名字补描述，与已有 `assets/` 目录匹配，用户确认后生成映射和 asset yaml。**产物：**
 
 - `chapters/<章节号>/extract.tmp.json` — 临时文件（LLM 生成 → 脚本写回 `matched` → 用户确认 → `--confirm` 后删除）
 - `chapters/<章节号>/character_map.yaml` — 角色映射（剧本角色名 → assets 目录名，最终版）
 - `chapters/<章节号>/scene_map.yaml` — 场景映射（剧本场景描述 → assets 目录名）
+- `chapters/<章节号>/prop_map.yaml` — 道具映射（剧本道具名 → assets 目录名）
+- `assets/characters/<名称>/character.yaml` — 角色档案（不覆盖已有）
+- `assets/scenes/<名称>/scene.yaml` — 场景档案（不覆盖已有）
+- `assets/props/<名称>/prop.yaml` — 道具档案（不覆盖已有）
 
 未匹配的新资产需用 `/vc-short:gen-image` 生成图片。
 
@@ -100,24 +104,25 @@ cd vc-short-plugin
 
 ### `/vc-short:gen-script` — 改编剧本
 
-将 `chapters/<章节号>/novel.md` 改编为适合 1-3 分钟短视频的剧本。**产物：**
+将 `chapters/<章节号>/novel.md` 改编为适合短视频的剧本。**产物：**
 
-- `chapters/<章节号>/script.md` — 改编剧本（用 `【场景X：描述，时间】` 分隔，精简对白、动作可视化）
+- `chapters/<章节号>/script.md` — 改编剧本（场景用 `## SC001 内 · 地点 · 时间` 标题分隔，按戏剧工作切场景，不按时长；支持 `[连续性]`/`[画面文字]`/`[转场]` 生产标签）
 
 ### `/vc-short:gen-shots` — 拆分分镜
 
-读取剧本和映射文件，拆分为多个 10 秒分镜，写入 YAML。**产物：**
+按镜头职责拆分：每镜有唯一职责（本镜结束时观众知道了什么变化）、`起点 → 唯一动作 → 终点` 状态链、对白估时定档（5/10/15 秒）、冻结首帧提示词。LLM 直接写 Markdown 分镜文档，CLI 编译为 shot YAML。**产物：**
 
-- `chapters/<章节号>/shots.json` — 临时 JSON（脚本消费后删除）
-- `chapters/<章节号>/shots/shot_001_01/shot.yaml` — 分镜参数（`script_segment`、`characters`、`scene`、`camera`、`status: pending`）
+- `chapters/<章节号>/shots.md` — 分镜文档（drama 风格 `## SHOT-场序-镜序` 块，人可读的创作产物，保留不删）
+- `chapters/<章节号>/shots/shot_001_01/shot.yaml` — 分镜参数（`source`、`purpose`、`script_segment`、`action`、`keyframe_prompt`、`end_state`、`characters`、`scene`、`camera`、`status: pending`）
 - `chapters/<章节号>/shots/shot_001_02/shot.yaml` — 同主号 = 「同一地点 + 同一批角色」的连续分镜，子号递增
 - `chapters/<章节号>/shots/shot_002_01/shot.yaml` — 地点或角色组变化后开新主号
 
 ### `/vc-short:gen-video` — 生成分镜视频
 
-调用图生视频 API，将分镜 YAML 转为视频，并提取首尾帧保持分镜连贯。**产物：**
+调用图生视频 API，将分镜 YAML 转为视频，并提取首尾帧保持分镜连贯。首帧优先用 `keyframe.png`（可用 `--with-keyframe` 按 `keyframe_prompt` 自动生成），无首帧图时用上一镜尾帧保持连贯。**产物：**
 
-- `chapters/<章节号>/shots/shot_<N>/shot.mp4` — 分镜视频（5 或 10 秒，分辨率 720p）
+- `chapters/<章节号>/shots/shot_<N>/shot.mp4` — 分镜视频（5/10/15 秒，分辨率 720p）
+- `chapters/<章节号>/shots/shot_<N>/keyframe.png` — 首帧图（可选，`--with-keyframe` 自动生成）
 - `chapters/<章节号>/shots/shot_<N>/first_frame.png` — 视频首帧
 - `chapters/<章节号>/shots/shot_<N>/last_frame.png` — 视频尾帧（下一分镜生成时作为参考图）
 
