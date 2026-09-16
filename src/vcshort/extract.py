@@ -235,6 +235,9 @@ def do_confirm(project_root: Path, chapter: str) -> None:
                 # 用 extract.tmp.json 里的 description 填 appearance
                 appearance = char.get("description", "") or ""
                 char_yaml["appearance"] = appearance
+                # personality 独立字段：性格描述，从言行决策推断
+                personality = char.get("personality", "") or ""
+                char_yaml["personality"] = personality
                 voice_map = CommentedMap()
                 voice_map["speaker"] = ""
                 # instruction 由 LLM 在 extract.tmp.json 中提供，未提供则留空
@@ -248,6 +251,7 @@ def do_confirm(project_root: Path, chapter: str) -> None:
                     f.write("# 角色档案 — 生成图片/音色时读取\n")
                     f.write("# gender: male / female（必填，影响音色选择）\n")
                     f.write("# appearance: 外貌描述，gen-image 用\n")
+                    f.write("# personality: 性格描述，从言行决策推断\n")
                     f.write("# full_prompt: 完整提示词，可直接粘贴到豆包 seedream 网页对话框\n")
                     f.write('#   生成时手动上传1张已有角色图当参考图（对应提示词里的"参考图1"）\n')
                     f.write("# voice.speaker: 音色 ID，留空则按 gender 随机选\n")

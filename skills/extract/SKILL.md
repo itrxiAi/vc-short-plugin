@@ -56,7 +56,7 @@ triggers:
 
 对每个资产，判断是否缺描述（外貌/环境/物件外观）：
 
-- **角色**：script 主要是对白和动作，外貌描写通常不足。缺 description 或 instruction 时，grep `novel.md` 搜角色名，取命中行前后各 5 行，从这些段落提取外貌、年龄、性格、语气
+- **角色**：script 主要是对白和动作，外貌描写通常不足。缺 description 或 instruction 时，grep `novel.md` 搜角色名，取命中行前后各 5 行，从这些段落提取外貌、年龄、性格、语气。**personality 独立提取**：从角色的言行、决策、他人评价中提炼性格特征（如"洒脱从容、重情义"、"阴险狡诈、唯利是图"），不要混进 description（description 只写外貌、年龄等可见特征）
 - **场景**：缺 description 时，grep `novel.md` 搜场景名或场景关键词，从命中段落提取环境描写
 - **道具**：缺 description 时，grep `novel.md` 搜道具名，从命中段落提取外观描写；同时推断 owner（持有者角色名，可为空）
 
@@ -78,7 +78,8 @@ script 里已经有足够信息的（如对白能推断语气），不查 novel�
     {
       "name": "角色名",
       "gender": "male",
-      "description": "外貌、年龄、性格等描述（script 不足时从 novel 补）",
+      "description": "外貌、年龄等描述（script 不足时从 novel 补）",
+      "personality": "性格描述（如：洒脱从容、重情义；或从言行推断的脾气特征）",
       "instruction": "用XX的语气说",
       "forms": [
         {"name": "默认", "description": "主要形态描述"},
@@ -176,7 +177,7 @@ vcshort extract <项目路径> --chapter <章节号> --confirm
 匹配前（LLM 生成）：
 ```json
 {
-  "characters": [{"name": "角色名", "gender": "male", "description": "...", "instruction": "用XX的语气说", "forms": [...]}],
+  "characters": [{"name": "角色名", "gender": "male", "description": "...", "personality": "...", "instruction": "用XX的语气说", "forms": [...]}],
   "scenes": [{"name": "场景名", "description": "..."}],
   "props": [{"name": "道具名", "description": "...", "owner": "持有者"}]
 }
@@ -185,7 +186,7 @@ vcshort extract <项目路径> --chapter <章节号> --confirm
 匹配后（脚本写回 matched）：
 ```json
 {
-  "characters": [{"name": "角色名", "gender": "male", "description": "...", "instruction": "...", "forms": [...], "matched": "角色名"}],
+  "characters": [{"name": "角色名", "gender": "male", "description": "...", "personality": "...", "instruction": "...", "forms": [...], "matched": "角色名"}],
   "scenes": [{"name": "场景名", "description": "...", "matched": "场景名"}],
   "props": [{"name": "道具名", "description": "...", "owner": "...", "matched": "道具名"}]
 }
