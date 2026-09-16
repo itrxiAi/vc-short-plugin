@@ -194,13 +194,15 @@ def main(argv=None) -> int:
     style = config.get("style")
     aspect = config.get("aspect_ratio")
 
-    # 拼接提示词：风格 + 修改提示词
-    parts = []
+    # 拼接提示词：修改指令在前（权重高），明确四视图都要改，风格在后
+    parts = [
+        args.prompt,
+        "上排正面全身、侧面全身和下排背面全身、面部特写四个视图全部同步修改，面部特写视图也要改成新的五官和发型",
+    ]
     if style:
         parts.append(f"{style}风格")
     if aspect:
         parts.append(f"{aspect}构图")
-    parts.append(args.prompt)
     final_prompt = "，".join(parts)
 
     # 编码原图

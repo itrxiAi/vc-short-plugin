@@ -35,6 +35,20 @@ except ImportError:
     print("错误：需要 ruamel.yaml，请运行 pip install ruamel.yaml", file=sys.stderr)
     sys.exit(1)
 
+from .gen_image import build_prompt as build_image_prompt
+
+
+def load_style_config(project_root: Path) -> dict:
+    """读取 config.yaml 的 style / aspect_ratio，供拼接完整提示词用。"""
+    config_path = project_root / "config.yaml"
+    if not config_path.exists():
+        return {"style": None, "aspect_ratio": None}
+    yaml_loader = YAML()
+    yaml_loader.allow_unicode = True
+    with open(config_path, encoding="utf-8") as f:
+        cfg = yaml_loader.load(f) or {}
+    return {"style": cfg.get("style"), "aspect_ratio": cfg.get("aspect_ratio")}
+
 
 def scan_existing_characters(project_root: Path) -> list:
     """扫描 assets/characters/ 目录，返回已有角色名列表。"""
@@ -189,6 +203,9 @@ def do_confirm(project_root: Path, chapter: str) -> None:
     new_chars = 0
     new_scenes = 0
 
+    # 加载 style 配置，供拼接角色完整提示词
+    style_config = load_style_config(project_root)
+
     # --- 生成 character_map.yaml + character.yaml ---
     char_map = CommentedMap()
     for char in extract_data.get("characters") or []:
@@ -216,16 +233,23 @@ def do_confirm(project_root: Path, chapter: str) -> None:
                 # gender 由 LLM 在 extract.tmp.json 中提供（male/female），未提供则留空
                 char_yaml["gender"] = char.get("gender", "") or ""
                 # 用 extract.tmp.json 里的 description 填 appearance
-                char_yaml["appearance"] = char.get("description", "")
+                appearance = char.get("description", "") or ""
+                char_yaml["appearance"] = appearance
                 voice_map = CommentedMap()
                 voice_map["speaker"] = ""
                 # instruction 由 LLM 在 extract.tmp.json 中提供，未提供则留空
                 voice_map["instruction"] = char.get("instruction", "") or ""
                 char_yaml["voice"] = voice_map
+                # 完整提示词（与 gen-image 调 API 时提交的 prompt 一致，可直接粘贴到豆包 seedream 网页对话框）
+                # 角色类型默认带1张参考图引用（"参考图1的风格"），手动上传1张已有角色图保画风一致
+                full_prompt = build_image_prompt(appearance, style_config, "character") if appearance else ""
+                char_yaml["full_prompt"] = full_prompt
                 with open(char_yaml_path, "w", encoding="utf-8") as f:
                     f.write("# 角色档案 — 生成图片/音色时读取\n")
                     f.write("# gender: male / female（必填，影响音色选择）\n")
                     f.write("# appearance: 外貌描述，gen-image 用\n")
+                    f.write("# full_prompt: 完整提示词，可直接粘贴到豆包 seedream 网页对话框\n")
+                    f.write('#   生成时手动上传1张已有角色图当参考图（对应提示词里的"参考图1"）\n')
                     f.write("# voice.speaker: 音色 ID，留空则按 gender 随机选\n")
                     f.write("# voice.instruction: 自然语言情感指令，如 \"用凶狠霸道的语气说\"\n\n")
                     yaml.dump(char_yaml, f)

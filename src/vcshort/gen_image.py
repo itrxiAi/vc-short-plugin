@@ -44,28 +44,53 @@ def load_config(project_root: Path) -> dict:
         return yaml.safe_load(f) or {}
 
 
-def build_prompt(user_prompt: str, style_config: dict, asset_type: str = None) -> str:
-    """将用户提示词与项目风格配置拼接。"""
-    parts = [user_prompt]
-    # 角色默认三视图设定图（正面/侧面/背面拼接在一张图里）+ 纯白背景，
+def build_prompt(user_prompt: str, style_config: dict, asset_type: str = None, ref_count: int = None, ref_descriptions: list = None) -> str:
+    """将用户提示词与项目风格配置拼接为结构化提示词（冒号分隔，换行组织）。
+
+    ref_count > 0 时加参考图引用（seedream 用"图N"引用，对应 image 字段顺序）。
+    ref_descriptions 为每个参考图的描述（如 ["角色形象", "场景"]），不传则默认"整体画风与服饰风格"。
+    角色类型默认 ref_count=1（用1张已有角色图保画风一致）；其他类型默认 0。
+    """
+    if ref_count is None:
+        ref_count = 1 if asset_type == "character" else 0
+    lines = []
+    # 参考图引用（seedream 官方写法：图1、图2... 对应 image 字段顺序）
+    if ref_count > 0:
+        if ref_descriptions:
+            ref_parts = [f"参考图{i}的{desc}" for i, desc in zip(range(1, ref_count + 1), ref_descriptions)]
+        else:
+            ref_parts = [f"参考图{i}的整体画风与服饰风格" for i in range(1, ref_count + 1)]
+        lines.append(f"参考：{'，'.join(ref_parts)}")
+        # 约束：仅角色生成时加（参考图只保画风和服饰，面部细节按 appearance 大幅调整）
+        if asset_type == "character":
+            lines.append("约束：面部细节要大幅调整，眼睛大小、双眼间距、嘴唇弧度、发型、眉毛角度、脸型都要有明显变化；服装样式需要大幅调整")
+    # 外貌/主体描述
+    if asset_type == "keyframe":
+        lines.append(f"画面：{user_prompt}")
+        lines.append("定格：视频首帧，画面定格瞬间")
+        # 约束：首帧图人物形象必须严格与参考图一致，保身份
+        if ref_count > 0:
+            lines.append("约束：画面中人物形象要严格与参考图一致，五官、发型、服饰、体型不得偏离")
+    else:
+        lines.append(f"外貌：{user_prompt}")
+    # 角色四视图设定图（正面/侧面/背面全身 + 面部特写）+ 纯白背景，
     # 确保各角度身份一致，便于图生视频在不同景别/机位时保持角色一致
     if asset_type == "character":
-        parts.append("角色三视图设定图")
-        parts.append("从左到右依次为正面全身、侧面全身、背面全身，三个角度在同一张图里并排展示")
-        parts.append("同一角色，服装发型完全一致")
-        parts.append("纯白背景")
+        lines.append("构图：并排三张，第一张是正面，第二张是背面，第三张是面部细节")
+        lines.append("一致性：同一角色，服装发型完全一致")
+        lines.append("背景：纯白背景")
         # 防写实：脸部过度写实会被视频 API 审核判定为真人（InputImageSensitiveContentDetected）
-        parts.append("面部卡通风格化，五官适度简化，皮肤无真实毛孔纹理，非写实，非真人照片感")
+        lines.append("画风：面部卡通风格化，五官适度简化，皮肤无真实毛孔纹理，非写实，非真人照片感")
     # 场景不出现人物，避免干扰后续图生视频
     if asset_type == "scene":
-        parts.append("不要出现人物")
+        lines.append("要求：不要出现人物")
     style = style_config.get("style")
     aspect = style_config.get("aspect_ratio")
     if style:
-        parts.append(f"{style}风格")
+        lines.append(f"风格：{style}风格")
     if aspect:
-        parts.append(f"{aspect}构图")
-    return "，".join(parts)
+        lines.append(f"比例：{aspect}构图")
+    return "\n".join(lines)
 
 
 def generate_image(prompt: str, api_config: dict, size: str = "2K", model: str = None, ref_images: list = None) -> str:
@@ -224,11 +249,19 @@ def main(argv=None) -> int:
     style_config = {"style": config.get("style"), "aspect_ratio": config.get("aspect_ratio")}
     model = args.model or api_config.get("image_model", DEFAULT_MODEL)
 
-    # 拼接提示词
+    # 参考图
+    ref_images = None
+    if args.ref_image:
+        ref_images = [p.strip() for p in args.ref_image.split(",") if p.strip()]
+        print(f"参考图: {ref_images}")
+
+    # 拼接提示词（有参考图时加"参考图N"引用，对应 image 字段顺序）
+    ref_count = len(ref_images) if ref_images else 0
     final_prompt = build_prompt(
         effective_prompt if args.type == "character" else args.prompt,
         style_config,
         args.type,
+        ref_count=ref_count,
     )
 
     # 生成图片
@@ -236,12 +269,6 @@ def main(argv=None) -> int:
     print(f"提示词: {final_prompt}")
     print(f"模型: {model}")
     print(f"尺寸: {args.size}")
-
-    # 参考图
-    ref_images = None
-    if args.ref_image:
-        ref_images = [p.strip() for p in args.ref_image.split(",") if p.strip()]
-        print(f"参考图: {ref_images}")
 
     image_url = generate_image(final_prompt, api_config, size=args.size, model=model, ref_images=ref_images)
     print(f"图片生成完成，正在下载...")

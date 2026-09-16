@@ -152,10 +152,15 @@ def find_prop_image(project_root: Path, prop_name: str) -> Path | None:
     return imgs[0] if imgs else None
 
 
-def build_content(shot: dict, project_root: Path, prev_frame: Path | None = None, keyframe_image: Path | None = None) -> list:
-    """构建 API content 数组：文本 + 首帧图/上一镜参考帧 + 角色参考图 + 场景参考图 + 角色参考音频。"""
-    content = []
+def build_prompt_plan(shot: dict, project_root: Path, prev_frame: Path | None = None, keyframe_image: Path | None = None) -> dict:
+    """扫描素材、编索引、拼提示词，不读 base64（dry-run 安全）。
 
+    返回 {
+        "prompt_text": str,           # 完整提示词，与 API 提交时一致
+        "ref_images": [(path, idx)],  # 参考图路径 + @图片N 索引
+        "ref_audios": [(path, idx)],   # 参考音频路径 + @音频N 索引
+    }
+    """
     camera = shot.get("camera") or {}
     script_segment = shot.get("script_segment", "")
 
@@ -170,55 +175,36 @@ def build_content(shot: dict, project_root: Path, prev_frame: Path | None = None
     img_index = 1
     keyframe_index = None
     prev_frame_index = None
+    ref_images = []  # [(path, idx)]
+    ref_audios = []   # [(path, idx)]
 
     # 冻结首帧图（优先）：keyframe.png 即本镜起点画面，已包含与上一镜的连贯性
-    if keyframe_image:
-        b64 = image_to_base64(keyframe_image)
-        if b64:
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": b64},
-                "role": "reference_image"
-            })
-            keyframe_index = img_index
-            img_index += 1
+    if keyframe_image and keyframe_image.exists():
+        keyframe_index = img_index
+        ref_images.append((keyframe_image, img_index))
+        img_index += 1
 
     # 上一镜最后一帧（保持连贯性；有首帧图时不再传，首帧图即本镜起点）
-    if prev_frame and not keyframe_image:
-        b64 = image_to_base64(prev_frame)
-        if b64:
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": b64},
-                "role": "reference_image"
-            })
-            prev_frame_index = img_index
-            img_index += 1
+    if prev_frame and not keyframe_image and prev_frame.exists():
+        prev_frame_index = img_index
+        ref_images.append((prev_frame, img_index))
+        img_index += 1
 
     # 角色参考图（characters 为 dict 列表，含 name/position）
+    # 注：position 只用于首帧图生成，不进 video_prompt
     characters = shot.get("characters") or []
     char_indices = {}
-    char_positions = {}
     for char_item in characters:
         char_name = char_item.get("name", "")
-        position = char_item.get("position", "")
 
         char_img = find_character_image(project_root, char_name, "默认")
         if not char_img:
             print(f"警告：未找到角色 {char_name} 的图片（assets/characters/{char_name}/）", file=sys.stderr)
             continue
 
-        b64 = image_to_base64(char_img)
-        if b64:
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": b64},
-                "role": "reference_image"
-            })
-            char_indices[char_name] = img_index
-            if position:
-                char_positions[char_name] = position
-            img_index += 1
+        char_indices[char_name] = img_index
+        ref_images.append((char_img, img_index))
+        img_index += 1
 
     # 场景参考图（支持多张，全部传入增加多样性）
     scene_key = shot.get("scene")
@@ -226,15 +212,9 @@ def build_content(shot: dict, project_root: Path, prev_frame: Path | None = None
     if scene_key:
         scene_imgs = find_scene_images(project_root, scene_key)
         for scene_img_path in scene_imgs:
-            b64 = image_to_base64(scene_img_path)
-            if b64:
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": b64},
-                    "role": "reference_image"
-                })
-                scene_indices.append(img_index)
-                img_index += 1
+            scene_indices.append(img_index)
+            ref_images.append((scene_img_path, img_index))
+            img_index += 1
 
     # 道具参考图（本镜出现的道具，传图保持视觉一致）
     prop_indices = {}
@@ -246,15 +226,9 @@ def build_content(shot: dict, project_root: Path, prev_frame: Path | None = None
         if not prop_img:
             print(f"提示：未找到道具 {prop_name} 的图片（assets/props/{prop_name}/）", file=sys.stderr)
             continue
-        b64 = image_to_base64(prop_img)
-        if b64:
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": b64},
-                "role": "reference_image"
-            })
-            prop_indices[prop_name] = img_index
-            img_index += 1
+        prop_indices[prop_name] = img_index
+        ref_images.append((prop_img, img_index))
+        img_index += 1
 
     # 角色参考音频（有对白的角色传入音色，让视频用该音色说对白）
     audio_indices = {}
@@ -262,76 +236,70 @@ def build_content(shot: dict, project_root: Path, prev_frame: Path | None = None
         char_name = speaker.split(":")[0] if ":" in speaker else speaker
         voice_path = find_character_voice(project_root, char_name)
         if voice_path:
-            audio_b64 = audio_to_base64(voice_path)
-            if audio_b64:
-                content.append({
-                    "type": "audio_url",
-                    "audio_url": {"url": audio_b64},
-                    "role": "reference_audio"
-                })
-                audio_indices[speaker] = img_index
-                img_index += 1
-                print(f"  角色 {speaker} 音色: {voice_path.name}")
+            audio_indices[speaker] = img_index
+            ref_audios.append((voice_path, img_index))
+            img_index += 1
+            print(f"  角色 {speaker} 音色: {voice_path.name}")
 
-    # 构建提示词：素材角色指定 + 动作/剧情描述(含对白) + 镜头语言 + 氛围
-    prompt_parts = []
+    # 构建提示词：结构化 key：value 换行格式
+    # 参考 / 起始画面 / 动作 / 对白 / 镜头 / 约束
+    sections = []  # [(key, value)]
 
-    # 1. 素材角色指定（用 @图片N/@音频N 引用，符合 Seedance 官方写法）
+    # 1. 参考（素材角色指定，用 @图片N/@音频N 引用，符合 Seedance 官方写法）
+    ref_parts = []
     if keyframe_index:
-        prompt_parts.append(f"@图片{keyframe_index}作为本镜起始画面")
+        ref_parts.append(f"@图片{keyframe_index}作为本镜起始画面")
     if prev_frame_index:
-        prompt_parts.append(f"@图片{prev_frame_index}作为上一镜结尾画面，保持连贯")
+        ref_parts.append(f"@图片{prev_frame_index}作为上一镜结尾画面，保持连贯")
     for char_key, idx in char_indices.items():
-        pos = char_positions.get(char_key)
-        if pos:
-            prompt_parts.append(f"参考@图片{idx}的{char_key}形象，{pos}")
-        else:
-            prompt_parts.append(f"参考@图片{idx}的{char_key}形象")
+        ref_parts.append(f"参考@图片{idx}的{char_key}形象")
     if scene_indices:
         idx_strs = "、".join(f"@图片{i}" for i in scene_indices)
-        prompt_parts.append(f"场景为{idx_strs}")
+        ref_parts.append(f"场景为{idx_strs}")
     for prop_name, idx in prop_indices.items():
-        prompt_parts.append(f"参考@图片{idx}的{prop_name}外观")
+        ref_parts.append(f"参考@图片{idx}的{prop_name}外观")
     for speaker, idx in audio_indices.items():
-        prompt_parts.append(f"{speaker}的音色参考@音频{idx}")
+        ref_parts.append(f"{speaker}的音色参考@音频{idx}")
+    if ref_parts:
+        sections.append(("参考", "，".join(ref_parts)))
 
-    # 1.5 起始画面描述：有上一镜尾图时以图为准，不传 keyframe_prompt（避免文图冲突）；
-    # 有首帧图或无任何起始图（文本兜底）时用首帧提示词描述起点
+    # 2. 起始画面：有上一镜尾图时以图为准，不传 keyframe_prompt（避免文图冲突）；
+    #    有首帧图或无任何起始图（文本兜底）时用首帧提示词描述起点
     keyframe_prompt = (shot.get("keyframe_prompt") or "").strip()
     if prev_frame_index:
-        prompt_parts.append(f"起始画面参考@图片{prev_frame_index}，从该画面状态开始演")
+        sections.append(("起始画面", f"参考@图片{prev_frame_index}，从该画面状态开始演"))
     elif keyframe_prompt:
-        prompt_parts.append(f"起始画面：{keyframe_prompt}")
+        sections.append(("起始画面", keyframe_prompt))
 
-    # 2. 动作/剧情描述（action 状态链 + script_segment 声音，按时间线叙述）
+    # 3. 动作（action 状态链，起点→终点的可见状态转换）
     action = (shot.get("action") or "").strip()
-    if action or script_segment:
-        narrative_parts = []
-        # 先写动作状态链（唯一动作：起点→终点的可见状态转换）
-        if action:
-            narrative_parts.append(action)
-        # 再写声音（对白/声音），转为自然叙述
-        if script_segment:
-            seg = script_segment
-            # 去掉括号里的纯动作描写行的括号
-            seg = re.sub(r'\n（([^）]+)）', r'\n\1', seg)
-            # 把 "角色（动作）：台词" 转为 "角色动作，用普通话说"台词""
-            def convert_dialogue(m):
-                speaker = m.group(1)
-                act = m.group(2) or ""
-                text = m.group(3) or ""
-                parts = []
-                if act:
-                    parts.append(f"{speaker}{act}")
-                if text:
-                    parts.append(f'{speaker}用普通话说"{text}"')
-                return "，".join(parts)
-            seg = re.sub(r'^(\S+?)（([^）]+)）：(.+)$', convert_dialogue, seg, flags=re.MULTILINE)
-            seg = seg.replace("\n", "，")
-            narrative_parts.append(seg)
-        prompt_parts.append("，".join(narrative_parts))
+    if action:
+        sections.append(("动作", action))
 
-    # 3. 镜头语言（景别 + 运镜 + 角度，归在一起）
+    # 4. 对白（script_segment 转写为自然叙述）
+    if script_segment:
+        seg = script_segment
+        # 过滤掉纯元信息行（如"（约25字≈5.5秒，加起身与进屋动作取10秒档）"）
+        seg = re.sub(r'\n（[^）]*?(?:字|秒|档)[^）]*）', '', seg)
+        # 去掉其他纯动作描写行的括号
+        seg = re.sub(r'\n（([^）]+)）', r'\n\1', seg)
+        # 把 "角色（动作）：台词" 转为 "角色动作，用普通话说"台词""
+        def convert_dialogue(m):
+            speaker = m.group(1)
+            act = m.group(2) or ""
+            text = m.group(3) or ""
+            parts = []
+            if act:
+                parts.append(f"{speaker}{act}")
+            if text:
+                parts.append(f'{speaker}用普通话说"{text}"')
+            return "，".join(parts)
+        seg = re.sub(r'^(\S+?)（([^）]+)）：(.+)$', convert_dialogue, seg, flags=re.MULTILINE)
+        seg = seg.replace("\n", "，").strip("，")
+        if seg:
+            sections.append(("对白", seg))
+
+    # 5. 镜头（景别 + 运镜 + 角度）
     camera_parts = []
     if camera.get("shot_type"):
         camera_parts.append(camera["shot_type"])
@@ -340,14 +308,47 @@ def build_content(shot: dict, project_root: Path, prev_frame: Path | None = None
     if camera.get("movement") and camera["movement"] != "固定":
         camera_parts.append(f"镜头{camera['movement']}")
     if camera_parts:
-        prompt_parts.append("，".join(camera_parts))
+        sections.append(("镜头", "，".join(camera_parts)))
 
-    # 4. 质量约束
-    prompt_parts.append("单个场景中尽量保持镜头固定，减少运镜和镜头切换，画面稳定")
-    prompt_parts.append("注意人物与周围环境比例")
+    # 6. 约束（质量约束）
+    sections.append(("约束", "单个场景中尽量保持镜头固定，减少运镜和镜头切换，画面稳定，注意人物与周围环境比例"))
 
-    prompt_text = "，".join(prompt_parts)
-    content.insert(0, {"type": "text", "text": prompt_text})
+    prompt_text = "\n".join(f"{k}：{v}" for k, v in sections)
+
+    return {
+        "prompt_text": prompt_text,
+        "ref_images": ref_images,
+        "ref_audios": ref_audios,
+    }
+
+
+def build_content(shot: dict, project_root: Path, prev_frame: Path | None = None, keyframe_image: Path | None = None) -> list:
+    """构建 API content 数组：文本 + 首帧图/上一镜参考帧 + 角色参考图 + 场景参考图 + 角色参考音频。"""
+    plan = build_prompt_plan(shot, project_root, prev_frame, keyframe_image)
+    content = []
+
+    # 参考图（按 plan 顺序读 base64）
+    for img_path, idx in plan["ref_images"]:
+        b64 = image_to_base64(img_path)
+        if b64:
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": b64},
+                "role": "reference_image"
+            })
+
+    # 参考音频
+    for audio_path, idx in plan["ref_audios"]:
+        audio_b64 = audio_to_base64(audio_path)
+        if audio_b64:
+            content.append({
+                "type": "audio_url",
+                "audio_url": {"url": audio_b64},
+                "role": "reference_audio"
+            })
+
+    # 文本提示词放最前
+    content.insert(0, {"type": "text", "text": plan["prompt_text"]})
 
     return content
 
@@ -581,26 +582,35 @@ def ensure_keyframe(shot: dict, project_root: Path, config: dict, shot_dir: Path
 
     # 参考图：角色图（保身份）+ 首张场景图（保地理）
     ref_images = []
+    ref_descriptions = []
     for char_item in shot.get("characters") or []:
         char_name = char_item.get("name", "")
-        char_name = char_name.split(":")[0] if ":" in char_name else char_name
-        img = find_character_image(project_root, char_name, "默认")
+        char_name_clean = char_name.split(":")[0] if ":" in char_name else char_name
+        img = find_character_image(project_root, char_name_clean, "默认")
         if img:
             ref_images.append(str(img))
+            pos = char_item.get("position", "")
+            desc = f"{char_name}形象"
+            if pos:
+                desc += f"，{pos}"
+            ref_descriptions.append(desc)
     scene_key = shot.get("scene")
     if scene_key:
         scene_imgs = find_scene_images(project_root, scene_key)
         if scene_imgs:
             ref_images.append(str(scene_imgs[0]))
+            ref_descriptions.append(f"{scene_key}场景")
 
     style = config.get("style")
     aspect = config.get("aspect_ratio")
-    parts = [keyframe_prompt, "视频首帧，画面定格瞬间"]
-    if style:
-        parts.append(f"{style}风格")
-    if aspect:
-        parts.append(f"{aspect}构图")
-    final_prompt = "，".join(parts)
+    from .gen_image import build_prompt
+    final_prompt = build_prompt(
+        keyframe_prompt,
+        {"style": style, "aspect_ratio": aspect},
+        "keyframe",
+        ref_count=len(ref_images),
+        ref_descriptions=ref_descriptions,
+    )
 
     print("正在生成首帧图...")
     print(f"提示词: {final_prompt}")

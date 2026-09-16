@@ -34,6 +34,8 @@ import re
 import sys
 from pathlib import Path
 
+from .gen_video import build_prompt_plan
+
 try:
     from ruamel.yaml import YAML
     from ruamel.yaml.comments import CommentedMap
@@ -216,7 +218,8 @@ def parse_shot_block(block: str, shot_num: tuple, start_line: int) -> dict:
         return ""
 
     script_segment = get_sub("声音")
-    keyframe_prompt = get_sub("冻结关键帧提示词")
+    # 兼容两种子标题写法：新文档用「首帧提示词」，旧文档用「冻结关键帧提示词」
+    keyframe_prompt = get_sub("首帧提示词") or get_sub("冻结关键帧提示词")
 
     # 解析角色
     characters = parse_characters(bullets.get("角色", ""))
@@ -292,7 +295,59 @@ def parse_storyboard(md_text: str) -> list:
 
 # ---------- YAML 写入 ----------
 
-def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str, char_map: dict, scene_map: dict, prop_map: dict) -> None:
+def build_keyframe_full_prompt(keyframe_prompt: str, style: str, aspect_ratio: str, ref_count: int = 0, ref_descriptions: list = None) -> str:
+    """拼接首帧图完整提示词，与 gen_video.ensure_keyframe 的拼接逻辑一致。
+
+    用 gen_image.build_prompt 生成结构化提示词（冒号分隔），含参考图引用。
+    可直接粘贴到豆包 seedream 网页对话框（参考图手动上传）。
+    """
+    keyframe_prompt = (keyframe_prompt or "").strip()
+    if not keyframe_prompt:
+        return ""
+    from .gen_image import build_prompt
+    return build_prompt(
+        keyframe_prompt,
+        {"style": style, "aspect_ratio": aspect_ratio},
+        "keyframe",
+        ref_count=ref_count,
+        ref_descriptions=ref_descriptions,
+    )
+
+
+def collect_keyframe_ref_images(project_root: Path, characters: list, scene: str) -> list:
+    """收集首帧图参考图路径，与 gen_video.ensure_keyframe 的收集逻辑一致。
+
+    顺序：本镜角色图（保身份，按 characters 顺序）+ 首张场景图（保地理）。
+    返回相对项目根的路径列表，供用户照着上传到网页对话框。
+    """
+    refs = []
+    # 角色图（默认形态）
+    for char_item in characters or []:
+        char_name = char_item.get("name", "") if isinstance(char_item, dict) else str(char_item)
+        if not char_name:
+            continue
+        # 兼容 "角色名:形态名" 写法
+        char_name = char_name.split(":")[0] if ":" in char_name else char_name
+        char_dir = project_root / "assets" / "characters" / char_name
+        if not char_dir.is_dir():
+            continue
+        for ext in (".png", ".jpg", ".jpeg", ".webp"):
+            candidate = char_dir / f"{char_name}{ext}"
+            if candidate.exists():
+                refs.append(str(candidate.relative_to(project_root)))
+                break
+    # 场景图（首张）
+    if scene:
+        scene_dir = project_root / "assets" / "scenes" / scene
+        if scene_dir.is_dir():
+            imgs = [p for p in scene_dir.iterdir() if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")]
+            if imgs:
+                imgs.sort(key=lambda p: int(p.stem) if p.stem.isdigit() else p.stem)
+                refs.append(str(imgs[0].relative_to(project_root)))
+    return refs
+
+
+def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str, char_map: dict, scene_map: dict, prop_map: dict, config: dict, project_root: Path) -> None:
     yaml = YAML()
     yaml.allow_unicode = True
     yaml.default_flow_style = False
@@ -321,8 +376,44 @@ def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str,
     data.yaml_set_comment_before_after_key("action", before="唯一动作（起点→终点状态链）")
 
     # 冻结首帧提示词
-    data["keyframe_prompt"] = shot_data.get("keyframe_prompt", "").strip()
+    keyframe_prompt = shot_data.get("keyframe_prompt", "").strip()
+    data["keyframe_prompt"] = keyframe_prompt
     data.yaml_set_comment_before_after_key("keyframe_prompt", before="冻结首帧提示词（只投影起点，删终点才有的内容）")
+
+    # 首帧图完整提示词（可直接粘贴到豆包 seedream 网页对话框）
+    style = config.get("style") or ""
+    aspect_ratio = config.get("aspect_ratio") or ""
+    # 扫描 assets 构造参考图描述（角色图带角色名+位置，场景图带场景名），与 ensure_keyframe 一致
+    mapped_chars = map_characters(shot_data.get("characters") or [], char_map)
+    mapped_scene = map_scene(shot_data.get("scene"), scene_map)
+    kf_ref_descriptions = []
+    for c in mapped_chars:
+        c_name = c.get("name", "")
+        c_name_clean = c_name.split(":")[0] if ":" in c_name else c_name
+        c_dir = project_root / "assets" / "characters" / c_name_clean
+        if c_dir.is_dir():
+            for ext in (".png", ".jpg", ".jpeg", ".webp"):
+                if (c_dir / f"{c_name_clean}{ext}").exists():
+                    pos = c.get("position", "")
+                    desc = f"{c_name}形象"
+                    if pos:
+                        desc += f"，{pos}"
+                    kf_ref_descriptions.append(desc)
+                    break
+    if mapped_scene:
+        s_dir = project_root / "assets" / "scenes" / mapped_scene
+        if s_dir.is_dir():
+            for ext in (".png", ".jpg", ".jpeg", ".webp"):
+                if any(p.suffix.lower() == ext for p in s_dir.iterdir()):
+                    kf_ref_descriptions.append(f"{mapped_scene}场景")
+                    break
+    keyframe_full_prompt = build_keyframe_full_prompt(
+        keyframe_prompt, style, aspect_ratio,
+        ref_count=len(kf_ref_descriptions),
+        ref_descriptions=kf_ref_descriptions,
+    )
+    data["keyframe_full_prompt"] = keyframe_full_prompt
+    data.yaml_set_comment_before_after_key("keyframe_full_prompt", before="首帧图完整提示词（可直接粘贴到豆包 seedream 网页对话框，参考图手动上传）")
 
     # 终点状态
     data["end_state"] = shot_data.get("end_state", "").strip()
@@ -352,6 +443,33 @@ def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str,
     cam_map["duration"] = camera.get("duration", 15)
     data["camera"] = cam_map
     data.yaml_set_comment_before_after_key("camera", before="镜头参数")
+
+    # 视频提示词（与 gen-video 调 API 时提交的 prompt_text 一致，含 @图片N/@音频N 引用）
+    # 模拟"有首帧图"场景：首帧图占 @图片1，角色图从 @图片2 开始
+    # 参考图上传顺序：首帧图(keyframe.png) → 角色图 → 场景图 → 道具图 → 角色音色
+    shot_for_plan = dict(shot_data)
+    shot_for_plan["characters"] = characters
+    shot_for_plan["scene"] = scene
+    shot_for_plan["props"] = props
+    shot_for_plan["camera"] = cam_map
+    # 用占位 Path 模拟 keyframe.png 存在，让首帧图编为 @图片1
+    keyframe_placeholder = filepath.parent / "keyframe.png"
+    try:
+        plan = build_prompt_plan(shot_for_plan, project_root, keyframe_image=keyframe_placeholder)
+        video_prompt = plan["prompt_text"]
+        video_ref_images = [str(p.relative_to(project_root)) for p, _ in plan["ref_images"]]
+        video_ref_audios = [str(p.relative_to(project_root)) for p, _ in plan["ref_audios"]]
+    except Exception as e:
+        print(f"警告：生成视频提示词失败: {e}", file=sys.stderr)
+        video_prompt = ""
+        video_ref_images = []
+        video_ref_audios = []
+    data["video_prompt"] = video_prompt
+    data.yaml_set_comment_before_after_key("video_prompt", before="视频提示词（与 gen-video 调 API 时提交的 prompt_text 一致，含 @图片N/@音频N 引用）")
+    data["video_ref_images"] = video_ref_images
+    data.yaml_set_comment_before_after_key("video_ref_images", before="参考图上传顺序（对应 @图片N 编号）")
+    data["video_ref_audios"] = video_ref_audios
+    data.yaml_set_comment_before_after_key("video_ref_audios", before="参考音频上传顺序（对应 @音频N 编号）")
 
     # 状态字段
     data["status"] = "pending"
@@ -492,6 +610,10 @@ def main(argv=None) -> int:
     if not config_path.exists():
         print(f"错误：config.yaml 不存在: {config_path}", file=sys.stderr)
         return 1
+    yaml_cfg = YAML()
+    yaml_cfg.allow_unicode = True
+    with open(config_path, encoding="utf-8") as f:
+        config = yaml_cfg.load(f) or {}
 
     # 加载映射文件（不存在则自动生成）
     char_map_path = chapter_dir / "character_map.yaml"
@@ -523,7 +645,7 @@ def main(argv=None) -> int:
         shot_dir = shots_dir / f"shot_{shot_id}"
         shot_dir.mkdir(parents=True, exist_ok=True)
         filepath = shot_dir / "shot.yaml"
-        write_shot_yaml(filepath, shot_data, shot_id, args.chapter, char_map, scene_map, prop_map)
+        write_shot_yaml(filepath, shot_data, shot_id, args.chapter, char_map, scene_map, prop_map, config, project_root)
         print(f"已生成: {filepath}")
 
     print(f"\n✅ 共生成 {len(shots)} 个分镜")
