@@ -8,7 +8,7 @@
   vcshort gen-video /path/to/project --chapter ch01 --shot 001
 
 流程：
-  1. 读取 shot YAML（shot_id, source, purpose, script_segment(声音), action, keyframe_prompt, end_state, characters, scene, camera）
+  1. 读取 shot YAML（shot_id, source, purpose, script_segment(声音), action, performance, keyframe_prompt, characters, scene, camera）
   2. 首帧控制：分镜目录下有 keyframe.png 则作为起始画面参考图；--with-keyframe 时按 keyframe_prompt 自动生成
   3. 从 assets 目录扫描角色和场景的图片（约定优于配置）
   4. 将参考图转 base64，作为 reference_image 传给视频生成 API
@@ -109,7 +109,17 @@ def find_character_voice(project_root: Path, char_name: str) -> Path | None:
 def find_character_image(project_root: Path, char_name: str, form_name: str = "默认") -> Path | None:
     """从 assets/characters/<char_name>/ 目录扫描角色图片。
     约定：默认形态为 <char_name>.png，其他形态为 <char_name>-<form>.png
+    群演特殊处理：从 assets/群演/ 目录查找 群演N.png
     """
+    # 群演特殊处理：assets/characters/群演/群演N.png
+    if char_name.startswith("群演"):
+        extra_dir = project_root / "assets" / "characters" / "群演"
+        if extra_dir.is_dir():
+            for ext in (".png", ".jpg", ".jpeg", ".webp"):
+                candidate = extra_dir / f"{char_name}{ext}"
+                if candidate.exists():
+                    return candidate
+        return None
     char_dir = project_root / "assets" / "characters" / char_name
     if not char_dir.is_dir():
         return None
@@ -167,7 +177,7 @@ def build_prompt_plan(shot: dict, project_root: Path, prev_frame: Path | None = 
     # 从 script_segment 解析出说话人（格式：角色名（动作）：台词）
     import re
     speakers_in_segment = []
-    for m in re.finditer(r'^(\S+?)（[^）]+）：', script_segment, flags=re.MULTILINE):
+    for m in re.finditer(r'^(\S+?)(?:（[^）]+）)?：', script_segment, flags=re.MULTILINE):
         speaker = m.group(1).strip()
         if speaker and speaker not in speakers_in_segment:
             speakers_in_segment.append(speaker)
@@ -271,33 +281,10 @@ def build_prompt_plan(shot: dict, project_root: Path, prev_frame: Path | None = 
     elif keyframe_prompt:
         sections.append(("起始画面", keyframe_prompt))
 
-    # 3. 动作（action 状态链，起点→终点的可见状态转换）
-    action = (shot.get("action") or "").strip()
-    if action:
-        sections.append(("动作", action))
-
-    # 4. 对白（script_segment 转写为自然叙述）
-    if script_segment:
-        seg = script_segment
-        # 过滤掉纯元信息行（如"（约25字≈5.5秒，加起身与进屋动作取10秒档）"）
-        seg = re.sub(r'\n（[^）]*?(?:字|秒|档)[^）]*）', '', seg)
-        # 去掉其他纯动作描写行的括号
-        seg = re.sub(r'\n（([^）]+)）', r'\n\1', seg)
-        # 把 "角色（动作）：台词" 转为 "角色动作，用普通话说"台词""
-        def convert_dialogue(m):
-            speaker = m.group(1)
-            act = m.group(2) or ""
-            text = m.group(3) or ""
-            parts = []
-            if act:
-                parts.append(f"{speaker}{act}")
-            if text:
-                parts.append(f'{speaker}用普通话说"{text}"')
-            return "，".join(parts)
-        seg = re.sub(r'^(\S+?)（([^）]+)）：(.+)$', convert_dialogue, seg, flags=re.MULTILINE)
-        seg = seg.replace("\n", "，").strip("，")
-        if seg:
-            sections.append(("对白", seg))
+    # 3. 表演（动作与对白的时序叙述，一段给模型）
+    performance = (shot.get("performance") or "").strip()
+    if performance:
+        sections.append(("表演", performance))
 
     # 5. 镜头（景别 + 运镜 + 角度）
     camera_parts = []

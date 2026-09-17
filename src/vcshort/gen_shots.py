@@ -17,13 +17,17 @@ Markdown 分镜块格式：
   - 机位：平视·固定
   - 角色：陈青源@大殿中央, 姚素素@左侧首位
   - 场景：玄青宗大殿
-  - 唯一动作：陈青源逐一回应质疑
-  - 终点：陈青源站定，师姐们神色各异
 
   ### 声音
   陈青源（拱手）：各位师姐，我确实是陈青源。
 
-  ### 冻结关键帧提示词
+  ### 动作
+  陈青源向众人拱手。
+
+  ### 表演
+  陈青源向众人拱手说"各位师姐，我确实是陈青源。"
+
+  ### 首帧提示词
   黑衣青年陈青源站在大殿中央，四周师姐围立
 
 SHOT 编号：场序-镜序（如 1-1、2-3），解析后归一为 001_01、002_03。
@@ -87,7 +91,7 @@ def map_characters(characters: list, char_map: dict) -> list:
     result = []
     for char in characters:
         name = char.get("name", "")
-        mapped = char_map.get(name, name)
+        mapped = char_map.get(name) or name
         out = CommentedMap()
         out["name"] = mapped
         position = char.get("position")
@@ -99,7 +103,7 @@ def map_characters(characters: list, char_map: dict) -> list:
 
 def map_scene(scene: str, scene_map: dict) -> str:
     if scene:
-        return scene_map.get(scene, scene)
+        return scene_map.get(scene) or scene
     return scene
 
 
@@ -117,7 +121,7 @@ def map_props(props: list, prop_map: dict) -> list:
         else:
             name = prop.get("name", "")
             state = prop.get("state", "")
-        mapped = prop_map.get(name, name)
+        mapped = prop_map.get(name) or name
         out = CommentedMap()
         out["name"] = mapped
         if state:
@@ -218,8 +222,9 @@ def parse_shot_block(block: str, shot_num: tuple, start_line: int) -> dict:
         return ""
 
     script_segment = get_sub("声音")
-    # 兼容两种子标题写法：新文档用「首帧提示词」，旧文档用「冻结关键帧提示词」
-    keyframe_prompt = get_sub("首帧提示词") or get_sub("冻结关键帧提示词")
+    keyframe_prompt = get_sub("首帧提示词")
+    action = get_sub("动作")
+    performance = get_sub("表演")
 
     # 解析角色
     characters = parse_characters(bullets.get("角色", ""))
@@ -248,9 +253,9 @@ def parse_shot_block(block: str, shot_num: tuple, start_line: int) -> dict:
         "source": bullets.get("来源", ""),
         "purpose": bullets.get("职责", ""),
         "script_segment": script_segment,
-        "action": bullets.get("唯一动作", ""),
+        "action": action,
+        "performance": performance,
         "keyframe_prompt": keyframe_prompt,
-        "end_state": bullets.get("终点", ""),
         "characters": characters,
         "props": props,
         "scene": bullets.get("场景", ""),
@@ -258,13 +263,15 @@ def parse_shot_block(block: str, shot_num: tuple, start_line: int) -> dict:
     }
 
     # 校验必填字段
-    required = ["职责", "唯一动作"]
+    required = ["职责"]
     missing = [k for k in required if not bullets.get(k)]
+    if not performance:
+        missing.append("表演")
     if missing:
         print(f"错误：SHOT-{scene_idx}-{shot_idx}（第 {start_line} 行附近）缺少必填字段：{', '.join(missing)}", file=sys.stderr)
         return None
     if not keyframe_prompt:
-        print(f"警告：SHOT-{scene_idx}-{shot_idx} 缺少「冻结关键帧提示词」子标题", file=sys.stderr)
+        print(f"警告：SHOT-{scene_idx}-{shot_idx} 缺少「首帧提示词」子标题", file=sys.stderr)
 
     return shot_data
 
@@ -371,9 +378,13 @@ def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str,
     data["script_segment"] = shot_data.get("script_segment", "").strip()
     data.yaml_set_comment_before_after_key("script_segment", before="声音（对白/声音，视频模型消费）")
 
-    # 唯一动作（状态链，视频模型用）
+    # 动作（可见动作，供首帧投影和人工核对）
     data["action"] = shot_data.get("action", "").strip()
-    data.yaml_set_comment_before_after_key("action", before="唯一动作（起点→终点状态链）")
+    data.yaml_set_comment_before_after_key("action", before="动作（本镜的可见动作）")
+
+    # 表演（动作与对白的时序叙述，视频模型用）
+    data["performance"] = shot_data.get("performance", "").strip()
+    data.yaml_set_comment_before_after_key("performance", before="表演（动作与对白的时序叙述，视频模型消费）")
 
     # 冻结首帧提示词
     keyframe_prompt = shot_data.get("keyframe_prompt", "").strip()
@@ -386,20 +397,17 @@ def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str,
     # 扫描 assets 构造参考图描述（角色图带角色名+位置，场景图带场景名），与 ensure_keyframe 一致
     mapped_chars = map_characters(shot_data.get("characters") or [], char_map)
     mapped_scene = map_scene(shot_data.get("scene"), scene_map)
+    from .gen_video import find_character_image
     kf_ref_descriptions = []
     for c in mapped_chars:
         c_name = c.get("name", "")
         c_name_clean = c_name.split(":")[0] if ":" in c_name else c_name
-        c_dir = project_root / "assets" / "characters" / c_name_clean
-        if c_dir.is_dir():
-            for ext in (".png", ".jpg", ".jpeg", ".webp"):
-                if (c_dir / f"{c_name_clean}{ext}").exists():
-                    pos = c.get("position", "")
-                    desc = f"{c_name}形象"
-                    if pos:
-                        desc += f"，{pos}"
-                    kf_ref_descriptions.append(desc)
-                    break
+        if find_character_image(project_root, c_name_clean, "默认"):
+            pos = c.get("position", "")
+            desc = f"{c_name}形象"
+            if pos:
+                desc += f"，{pos}"
+            kf_ref_descriptions.append(desc)
     if mapped_scene:
         s_dir = project_root / "assets" / "scenes" / mapped_scene
         if s_dir.is_dir():
@@ -414,10 +422,6 @@ def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str,
     )
     data["keyframe_full_prompt"] = keyframe_full_prompt
     data.yaml_set_comment_before_after_key("keyframe_full_prompt", before="首帧图完整提示词（可直接粘贴到豆包 seedream 网页对话框，参考图手动上传）")
-
-    # 终点状态
-    data["end_state"] = shot_data.get("end_state", "").strip()
-    data.yaml_set_comment_before_after_key("end_state", before="终点状态（下一镜起点须与此一致）")
 
     # 角色引用
     characters = map_characters(shot_data.get("characters") or [], char_map)
@@ -589,8 +593,11 @@ def main(argv=None) -> int:
         return 1
 
     chapter_dir = project_root / "chapters" / args.chapter
+    if not chapter_dir.exists():
+        print(f"错误：章节目录 {chapter_dir} 不存在（由 gen-script 创建，请确认 --chapter 参数）", file=sys.stderr)
+        return 1
+
     shots_dir = chapter_dir / "shots"
-    shots_dir.mkdir(parents=True, exist_ok=True)
 
     # 读取 Markdown 分镜文档
     md_path = chapter_dir / "shots.md"

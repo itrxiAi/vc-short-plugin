@@ -54,13 +54,28 @@ def build_prompt(user_prompt: str, style_config: dict, asset_type: str = None, r
     if ref_count is None:
         ref_count = 1 if asset_type == "character" else 0
     lines = []
-    # 参考图引用（seedream 官方写法：图1、图2... 对应 image 字段顺序）
+    # 参考图只标注对应主体，位置等构图信息统一放在“画面”中，避免两处描述互相干扰
     if ref_count > 0:
         if ref_descriptions:
-            ref_parts = [f"参考图{i}的{desc}" for i, desc in zip(range(1, ref_count + 1), ref_descriptions)]
+            image_refs = []
+            scene_refs = []
+            other_refs = []
+            for i, desc in zip(range(1, ref_count + 1), ref_descriptions):
+                subject = desc.partition("，")[0]
+                if subject.endswith("形象"):
+                    image_refs.append(f"{subject[:-2]}@图{i}")
+                elif subject.endswith("场景"):
+                    scene_refs.append(f"{subject[:-2]}@图{i}")
+                else:
+                    other_refs.append(f"{subject}@图{i}")
+            if image_refs:
+                lines.append(f"形象参考：{'，'.join(image_refs)}")
+            if scene_refs:
+                lines.append(f"场景参考：{'，'.join(scene_refs)}")
+            if other_refs:
+                lines.append(f"参考：{'，'.join(other_refs)}")
         else:
-            ref_parts = [f"参考图{i}的整体画风与服饰风格" for i in range(1, ref_count + 1)]
-        lines.append(f"参考：{'，'.join(ref_parts)}")
+            lines.append("形象参考：" + "，".join(f"整体画风与服饰风格@图{i}" for i in range(1, ref_count + 1)))
         # 约束：仅角色生成时加（参考图只保画风和服饰，面部细节按 appearance 大幅调整）
         if asset_type == "character":
             lines.append("约束：面部细节要大幅调整，眼睛大小、双眼间距、嘴唇弧度、发型、眉毛角度、脸型都要有明显变化；服装样式需要大幅调整")

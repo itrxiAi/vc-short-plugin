@@ -17,6 +17,8 @@ STRUCTURE = [
     ("assets", True),                   # 素材
     ("assets/characters", True),        # 角色
     ("assets/characters/.gitkeep", False),
+    ("assets/characters/群演", True),   # 群演（最多10个：群演1.png ~ 群演10.png）
+    ("assets/characters/群演/.gitkeep", False),
     ("assets/scenes", True),            # 场景
     ("assets/scenes/.gitkeep", False),
     ("assets/costumes", True),          # 服装
@@ -58,6 +60,7 @@ tts:
 # 角色和场景资产由 assets 目录结构决定，无需在此配置：
 #   assets/characters/<角色名>/<角色名>.png          # 默认形态
 #   assets/characters/<角色名>/<角色名>-<形态>.png    # 其他形态
+#   assets/characters/群演/群演1.png ~ 群演10.png     # 群演（最多10个）
 #   assets/scenes/<场景名>/1.png, 2.png, ...         # 场景多图
 """
 
