@@ -162,7 +162,7 @@ def find_prop_image(project_root: Path, prop_name: str) -> Path | None:
     return imgs[0] if imgs else None
 
 
-def build_prompt_plan(shot: dict, project_root: Path, prev_frame: Path | None = None, keyframe_image: Path | None = None) -> dict:
+def build_prompt_plan(shot: dict, project_root: Path, prev_frame: Path | None = None, keyframe_image: Path | None = None, allow_missing_keyframe: bool = False) -> dict:
     """扫描素材、编索引、拼提示词，不读 base64（dry-run 安全）。
 
     返回 {
@@ -189,7 +189,7 @@ def build_prompt_plan(shot: dict, project_root: Path, prev_frame: Path | None = 
     ref_audios = []   # [(path, idx)]
 
     # 冻结首帧图（优先）：keyframe.png 即本镜起点画面，已包含与上一镜的连贯性
-    if keyframe_image and keyframe_image.exists():
+    if keyframe_image and (keyframe_image.exists() or allow_missing_keyframe):
         keyframe_index = img_index
         ref_images.append((keyframe_image, img_index))
         img_index += 1
@@ -273,12 +273,10 @@ def build_prompt_plan(shot: dict, project_root: Path, prev_frame: Path | None = 
     if ref_parts:
         sections.append(("参考", "，".join(ref_parts)))
 
-    # 2. 起始画面：有上一镜尾图时以图为准，不传 keyframe_prompt（避免文图冲突）；
-    #    有首帧图或无任何起始图（文本兜底）时用首帧提示词描述起点
+    # 2. 起始画面：有首帧图或上一镜尾帧时以图片为准，不再重复拼接文字字段；
+    #    没有任何起始参考图时才用 keyframe_prompt 作为文字兜底
     keyframe_prompt = (shot.get("keyframe_prompt") or "").strip()
-    if prev_frame_index:
-        sections.append(("起始画面", f"参考@图片{prev_frame_index}，从该画面状态开始演"))
-    elif keyframe_prompt:
+    if not keyframe_index and not prev_frame_index and keyframe_prompt:
         sections.append(("起始画面", keyframe_prompt))
 
     # 3. 表演（动作与对白的时序叙述，一段给模型）
@@ -298,7 +296,7 @@ def build_prompt_plan(shot: dict, project_root: Path, prev_frame: Path | None = 
         sections.append(("镜头", "，".join(camera_parts)))
 
     # 6. 约束（质量约束）
-    sections.append(("约束", "单个场景中尽量保持镜头固定，减少运镜和镜头切换，画面稳定，注意人物与周围环境比例"))
+    sections.append(("约束", "画面稳定，注意人物与周围环境比例"))
 
     prompt_text = "\n".join(f"{k}：{v}" for k, v in sections)
 
@@ -597,6 +595,7 @@ def ensure_keyframe(shot: dict, project_root: Path, config: dict, shot_dir: Path
         "keyframe",
         ref_count=len(ref_images),
         ref_descriptions=ref_descriptions,
+        shot_type=(shot.get("camera") or {}).get("shot_type"),
     )
 
     print("正在生成首帧图...")

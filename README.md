@@ -41,7 +41,7 @@ mklink /J "%USERPROFILE%\.claude\plugins\vc-short" "%USERPROFILE%\.vc-short"
 
 ```
 vc-short-plugin/
-├── skills/          # 11 个技能（SKILL.md）
+├── skills/          # 12 个技能（SKILL.md）
 ├── agents/          # 子代理（script-reviewer）
 ├── bin/vcshort      # 启动器（bash）+ vcshort.bat（Windows cmd）
 ├── python/          # 便携 Python + site-packages（含 opencv、ffmpeg）
@@ -70,7 +70,19 @@ cd vc-short-plugin
 - `<项目名>/assets/` — 资产根目录（含 `characters/`、`scenes/`、`costumes/`、`props/` 子目录）
 - `<项目名>/chapters/` — 章节根目录
 
-执行后需手动把小说原文放到 `chapters/ch01/novel.md`，再进入下一步。
+执行后需准备 `chapters/ch01/novel.md`：可以直接粘贴小说原文，也可以用 `/vc-short:crawl-novel` 从阅读页爬取。
+
+### `/vc-short:crawl-novel` — 爬取小说章节
+
+用 Playwright 打开小说阅读页，带重叠滚动截图，再由 Agent 逐张读图转写。**产物：**
+
+- `chapters/<章节号>/novel.md` — 该章小说原文
+- `chapters/<章节号>/brief.md` — 该章简述（一句话梗概、出场人物、场景、主要事件、章末钩子）
+- 中间产物（截图、拼接预览图、crawl.json）放在 `<项目>/.crawl/ch<NN>/`，转写完成后删除；章节目录下保留 `novel.md` 和 `brief.md`
+
+阅读页正文用自定义字体混淆，DOM 文本不可用，因此必须读截图转写，不读 DOM、不调用 OCR。不绕过登录、验证码或付费墙，检测到付费墙即停止并报告。
+
+依赖**系统 `python3` + playwright**（插件便携 Python 不含）：`python3 -m pip install playwright && python3 -m playwright install chromium`。
 
 ### `/vc-short:extract` — 提取角色/场景/道具
 
@@ -145,8 +157,9 @@ vc-short-plugin/
 ├── .claude-plugin/
 │   └── plugin.json          # Claude Code / WorkBuddy 插件清单
 ├── plugin.json              # Cursor / Agent Plugins 清单
-├── skills/                  # 11 个技能
+├── skills/                  # 12 个技能
 │   ├── init/SKILL.md
+│   ├── crawl-novel/SKILL.md
 │   ├── extract/SKILL.md
 │   ├── gen-character/SKILL.md
 │   ├── gen-image/SKILL.md

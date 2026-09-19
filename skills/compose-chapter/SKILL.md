@@ -56,8 +56,15 @@ vcshort compose-chapter <项目路径> \
   --output "第1章.mp4"
 ```
 
+从指定分镜目录合成（如 `shots001`）：
+```bash
+vcshort compose-chapter <项目路径> \
+  --chapter <章节号> \
+  --shots-dir shots001
+```
+
 脚本会自动完成以下操作：
-1. 扫描 `chapters/<章节号>/shots/shot_*/shot.mp4`，按分镜号排序
+1. 扫描 `chapters/<章节号>/<shots-dir>/shot_*/shot.mp4`，按分镜号排序
 2. 用 ffmpeg concat 拼接所有分镜视频
 3. 输出到 `chapters/<章节号>/chapter.mp4`
 

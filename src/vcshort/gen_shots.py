@@ -302,7 +302,7 @@ def parse_storyboard(md_text: str) -> list:
 
 # ---------- YAML 写入 ----------
 
-def build_keyframe_full_prompt(keyframe_prompt: str, style: str, aspect_ratio: str, ref_count: int = 0, ref_descriptions: list = None) -> str:
+def build_keyframe_full_prompt(keyframe_prompt: str, style: str, aspect_ratio: str, ref_count: int = 0, ref_descriptions: list = None, shot_type: str = None) -> str:
     """拼接首帧图完整提示词，与 gen_video.ensure_keyframe 的拼接逻辑一致。
 
     用 gen_image.build_prompt 生成结构化提示词（冒号分隔），含参考图引用。
@@ -318,6 +318,7 @@ def build_keyframe_full_prompt(keyframe_prompt: str, style: str, aspect_ratio: s
         "keyframe",
         ref_count=ref_count,
         ref_descriptions=ref_descriptions,
+        shot_type=shot_type,
     )
 
 
@@ -415,10 +416,12 @@ def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str,
                 if any(p.suffix.lower() == ext for p in s_dir.iterdir()):
                     kf_ref_descriptions.append(f"{mapped_scene}场景")
                     break
+    shot_type = (shot_data.get("camera") or {}).get("shot_type", "")
     keyframe_full_prompt = build_keyframe_full_prompt(
         keyframe_prompt, style, aspect_ratio,
         ref_count=len(kf_ref_descriptions),
         ref_descriptions=kf_ref_descriptions,
+        shot_type=shot_type,
     )
     data["keyframe_full_prompt"] = keyframe_full_prompt
     data.yaml_set_comment_before_after_key("keyframe_full_prompt", before="首帧图完整提示词（可直接粘贴到豆包 seedream 网页对话框，参考图手动上传）")
@@ -459,7 +462,7 @@ def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str,
     # 用占位 Path 模拟 keyframe.png 存在，让首帧图编为 @图片1
     keyframe_placeholder = filepath.parent / "keyframe.png"
     try:
-        plan = build_prompt_plan(shot_for_plan, project_root, keyframe_image=keyframe_placeholder)
+        plan = build_prompt_plan(shot_for_plan, project_root, keyframe_image=keyframe_placeholder, allow_missing_keyframe=True)
         video_prompt = plan["prompt_text"]
         video_ref_images = [str(p.relative_to(project_root)) for p, _ in plan["ref_images"]]
         video_ref_audios = [str(p.relative_to(project_root)) for p, _ in plan["ref_audios"]]

@@ -44,7 +44,7 @@ def load_config(project_root: Path) -> dict:
         return yaml.safe_load(f) or {}
 
 
-def build_prompt(user_prompt: str, style_config: dict, asset_type: str = None, ref_count: int = None, ref_descriptions: list = None) -> str:
+def build_prompt(user_prompt: str, style_config: dict, asset_type: str = None, ref_count: int = None, ref_descriptions: list = None, shot_type: str = None) -> str:
     """将用户提示词与项目风格配置拼接为结构化提示词（冒号分隔，换行组织）。
 
     ref_count > 0 时加参考图引用（seedream 用"图N"引用，对应 image 字段顺序）。
@@ -82,7 +82,15 @@ def build_prompt(user_prompt: str, style_config: dict, asset_type: str = None, r
     # 外貌/主体描述
     if asset_type == "keyframe":
         lines.append(f"画面：{user_prompt}")
-        lines.append("定格：视频首帧，画面定格瞬间")
+        if shot_type:
+            shot_type_descriptions = {
+                "近景": "近景，人物胸部以上，突出面部和表情",
+                "中景": "中景，人物腰部或膝盖以上，看清站位、手部动作和部分环境",
+                "远景": "远景，人物全身可见，交代2-3人的位置关系和空间环境",
+                "全景": "全景，人物全身可见，交代多人关系和完整空间环境",
+            }
+            lines.append(f"景别：{shot_type_descriptions.get(shot_type, shot_type)}")
+        lines.append("用途：作为图生视频的起始画面")
         # 约束：首帧图人物形象必须严格与参考图一致，保身份
         if ref_count > 0:
             lines.append("约束：画面中人物形象要严格与参考图一致，五官、发型、服饰、体型不得偏离")

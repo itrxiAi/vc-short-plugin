@@ -33,7 +33,7 @@ STRUCTURE = [
 ]
 
 # 模板文件内容
-NOVEL_TEMPLATE = """<!-- 在这里粘贴小说原文 -->
+NOVEL_TEMPLATE = """<!-- 在这里粘贴小说原文，或用 /vc-short:crawl-novel 从阅读页爬取 -->
 <!-- 放好后执行 /vc-short:extract 开始制作 -->
 """
 
@@ -86,7 +86,8 @@ AI 短视频制作工作空间。
 │   └── props/             # 道具图
 ├── chapters/              # 章节
 │   └── ch01/              # 第1章
-│       ├── novel.md       # 小说原文（用户上传）
+│       ├── novel.md       # 小说原文（用户上传，或 crawl-novel 爬取）
+│       ├── brief.md       # 本章简述（crawl-novel 生成）
 │       ├── script.md      # 改编剧本（gen-script 生成）
 │       ├── character_map.yaml  # 角色映射（extract 生成）
 │       ├── scene_map.yaml      # 场景映射（extract 生成）
@@ -100,7 +101,7 @@ AI 短视频制作工作空间。
 
 ## 使用方式
 
-1. 把小说原文放到 `chapters/ch01/novel.md`
+1. 准备 `chapters/ch01/novel.md`：粘贴小说原文，或跟 Devin 说 `/vc-short:crawl-novel` 从阅读页爬取
 2. 跟 Devin 说：`/vc-short:extract` 提取角色场景并生成图片
 3. 跟 Devin 说：`/vc-short:gen-script` 改编剧本
 4. 跟 Devin 说：`/vc-short:gen-shots` 拆分分镜
@@ -137,7 +138,7 @@ def create_project(name: str) -> None:
     )
     print(f"✅ 项目 {name} 已创建")
     print(f"   cd {name}")
-    print(f"   把小说原文放到 chapters/ch01/novel.md，然后 /vc-short:extract 开始制作")
+    print(f"   准备 chapters/ch01/novel.md（粘贴原文或 /vc-short:crawl-novel 爬取），然后 /vc-short:extract 开始制作")
 
 
 def main(argv=None) -> int:

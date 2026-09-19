@@ -33,13 +33,14 @@ vcshort <command> ...
 当用户执行 `/vc-short:init <项目名>` 时：
 1. 运行 `vcshort init <项目名>`
 2. 告知用户项目已创建
-3. 提示用户把小说原文放到 `chapters/ch01/novel.md`，放好后执行 `/vc-short:extract`
+3. 提示用户准备 `chapters/ch01/novel.md`：可以直接粘贴原文，也可以用 `/vc-short:crawl-novel` 从阅读页爬取
 4. **到此为止，不要自动进入下一步，等待用户操作**
 
 ## 后续命令
 
 init 只负责建目录。后续流程由用户通过对应命令触发，每个命令有自己的 SKILL.md：
 
+- `/vc-short:crawl-novel` — 爬取小说章节，写入 `chapters/<章节号>/novel.md` 并生成简述 `brief.md`
 - `/vc-short:extract` — 从小说原文提取角色/场景
 - `/vc-short:gen-image` — 生成角色/场景图片
 - `/vc-short:fix-image` — 修改已有图片

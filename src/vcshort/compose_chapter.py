@@ -12,6 +12,7 @@
 import argparse
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 try:
@@ -28,9 +29,9 @@ except ImportError:
     sys.exit(1)
 
 
-def find_shot_videos(chapter_dir: Path) -> list:
-    """按分镜号顺序查找所有 shot.mp4 文件。"""
-    shots_dir = chapter_dir / "shots"
+def find_shot_videos(chapter_dir: Path, shots_dir_name: str = "shots") -> list:
+    """按分镜号顺序查找指定分镜目录下的所有 shot.mp4 文件。"""
+    shots_dir = chapter_dir / shots_dir_name
     if not shots_dir.is_dir():
         return []
     videos = []
@@ -45,52 +46,185 @@ def find_shot_videos(chapter_dir: Path) -> list:
 def get_video_info(video_path: Path) -> dict:
     """用 opencv 获取视频信息。"""
     cap = cv2.VideoCapture(str(video_path))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
+    frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     info = {
-        "fps": cap.get(cv2.CAP_PROP_FPS) or 24.0,
+        "fps": fps,
         "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
         "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-        "frames": int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
+        "frames": frames,
+        "duration": frames / fps if fps else 0.0,
     }
     cap.release()
     return info
 
 
-def compose(videos: list, output_path: Path) -> None:
-    """用 ffmpeg concat demuxer 拼接视频，输出 H.264 编码。"""
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+def has_audio(video_path: Path) -> bool:
+    """检测视频是否包含音频流，供黑屏片段补齐静音音轨。"""
+    result = subprocess.run(
+        [FFMPEG, "-i", str(video_path), "-f", "null", "-"],
+        capture_output=True,
+        text=True,
+    )
+    return "Audio:" in result.stderr
 
-    # 生成 concat 文件列表
-    list_file = output_path.parent / "concat_list.txt"
-    with open(list_file, "w", encoding="utf-8") as f:
-        for v in videos:
-            # ffmpeg concat 需要转义单引号
-            escaped = str(v).replace("'", "'\\''")
-            f.write(f"file '{escaped}'\n")
 
-    # 从第一个视频获取参数
-    info = get_video_info(videos[0])
-    fps = info["fps"]
+def scene_id(video_path: Path) -> str:
+    """从 shot_001_09 目录名提取场景主编号 001。"""
+    name = video_path.parent.name.removeprefix("shot_")
+    return name.split("_", 1)[0]
 
-    # 用 ffmpeg concat demuxer + 重新编码为 H.264
-    cmd = [
-        FFMPEG, "-y",
-        "-f", "concat", "-safe", "0",
-        "-i", str(list_file),
-        "-c:v", "libx264", "-crf", "18",
-        "-preset", "fast",
-        "-r", str(fps),
-        "-pix_fmt", "yuv420p",
-        "-movflags", "+faststart",
-        str(output_path)
+
+def scene_name(video_path: Path) -> str:
+    """读取分镜 YAML 中的场景名，用作转场提示。"""
+    yaml_path = video_path.parent / "shot.yaml"
+    if yaml_path.exists():
+        for line in yaml_path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("scene:"):
+                return line.split(":", 1)[1].strip().strip("'\\\"")
+    return scene_id(video_path)
+
+
+def find_font() -> str | None:
+    """查找可显示中文的字体；找不到时交给 ffmpeg 默认字体。"""
+    candidates = [
+        "/System/Library/Fonts/Supplemental/Songti.ttc",
+        "/System/Library/Fonts/STHeiti Medium.ttc",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
     ]
+    return next((path for path in candidates if Path(path).exists()), None)
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
+
+def escape_drawtext(text: str) -> str:
+    """转义 ffmpeg drawtext 的文本内容。"""
+    return text.replace("\\\\", "\\\\\\\\").replace(":", "\\\\:").replace("'", "\\\\'")
+
+
+def run_ffmpeg(command: list) -> None:
+    result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0:
         print(f"ffmpeg 错误:\n{result.stderr}", file=sys.stderr)
         sys.exit(1)
 
-    # 清理临时文件
-    list_file.unlink(missing_ok=True)
+
+def render_clip(
+    video_path: Path,
+    output_path: Path,
+    info: dict,
+    audio: bool,
+    fade_in: float = 0.0,
+    fade_out: float = 0.0,
+    scene_label: str = "",
+) -> None:
+    """为场景边界添加淡入/淡出黑屏效果和场景提示，并统一编码参数。"""
+    filters = []
+    if fade_in > 0:
+        filters.append(f"fade=t=in:st=0:d={fade_in:.3f}:color=black")
+    if fade_out > 0:
+        start = max(0.0, info["duration"] - fade_out)
+        filters.append(f"fade=t=out:st={start:.3f}:d={fade_out:.3f}:color=black")
+    if scene_label:
+        label_start = 0.0
+        label_fade = 0.4
+        label_hold_end = label_fade + 1.0
+        label_end = label_hold_end + label_fade
+        alpha = (
+            f"if(lt(t\\,{label_fade})\\,t/{label_fade}\\,"
+            f"if(lt(t\\,{label_hold_end})\\,1\\,"
+            f"if(lt(t\\,{label_end})\\,({label_end}-t)/{label_fade}\\,0)))"
+        )
+        font = find_font()
+        font_option = f":fontfile='{font}'" if font else ""
+        text = escape_drawtext(scene_label)
+        filters.append(
+            f"drawtext=text='{text}'{font_option}:x=40:y=40:fontsize=48:"
+            f"fontcolor=white:borderw=2:bordercolor=black@0.8:shadowx=2:shadowy=2:"
+            f"shadowcolor=black@0.65:alpha='{alpha}'"
+        )
+
+    command = [FFMPEG, "-y", "-i", str(video_path)]
+    if filters:
+        command += ["-vf", ",".join(filters)]
+    command += ["-map", "0:v:0", "-c:v", "libx264", "-crf", "18", "-preset", "fast"]
+    if audio:
+        command += ["-map", "0:a:0?", "-c:a", "aac", "-ar", "48000", "-ac", "2"]
+    else:
+        command += ["-an"]
+    command += ["-r", str(info["fps"]), "-pix_fmt", "yuv420p", str(output_path)]
+    run_ffmpeg(command)
+
+
+def render_black(output_path: Path, info: dict, audio: bool, duration: float) -> None:
+    """生成场景之间的短暂黑屏，音频存在时补静音。"""
+    size = f"{info['width']}x{info['height']}"
+    command = [
+        FFMPEG, "-y",
+        "-f", "lavfi", "-i", f"color=c=black:s={size}:r={info['fps']}:d={duration:.3f}",
+    ]
+    if audio:
+        command += [
+            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+            "-t", f"{duration:.3f}", "-map", "0:v:0", "-map", "1:a:0",
+            "-c:a", "aac", "-ar", "48000", "-ac", "2",
+        ]
+    else:
+        command += ["-map", "0:v:0", "-an"]
+    command += [
+        "-c:v", "libx264", "-crf", "18", "-preset", "fast",
+        "-r", str(info["fps"]), "-pix_fmt", "yuv420p", str(output_path),
+    ]
+    run_ffmpeg(command)
+
+
+def compose(videos: list, output_path: Path) -> None:
+    """拼接视频，并在场景边界淡出黑屏、短暂黑屏后淡入下一场景。"""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fade_duration = 0.25
+    black_duration = 0.0
+    info = get_video_info(videos[0])
+    audio = has_audio(videos[0])
+
+    with tempfile.TemporaryDirectory(prefix="compose_") as temp_dir:
+        temp_dir = Path(temp_dir)
+        rendered = []
+        for index, video in enumerate(videos):
+            previous_scene = scene_id(videos[index - 1]) if index else None
+            next_scene = scene_id(videos[index + 1]) if index + 1 < len(videos) else None
+            current_scene = scene_id(video)
+            is_scene_start = index > 0 and current_scene != previous_scene
+            is_scene_end = index + 1 < len(videos) and current_scene != next_scene
+            clip_info = get_video_info(video)
+            clip_path = temp_dir / f"clip_{index:04d}.mp4"
+            render_clip(
+                video,
+                clip_path,
+                clip_info,
+                audio,
+                fade_in=min(fade_duration, clip_info["duration"] / 2) if is_scene_start else 0.0,
+                fade_out=min(fade_duration, clip_info["duration"] / 2) if is_scene_end else 0.0,
+                scene_label=scene_name(video) if is_scene_start else "",
+            )
+            rendered.append(clip_path)
+            if is_scene_end and black_duration > 0:
+                black_path = temp_dir / f"black_{index:04d}.mp4"
+                render_black(black_path, info, audio, black_duration)
+                rendered.append(black_path)
+
+        list_file = temp_dir / "concat_list.txt"
+        with list_file.open("w", encoding="utf-8") as file:
+            for clip in rendered:
+                escaped = str(clip).replace("'", "'\\''")
+                file.write(f"file '{escaped}'\n")
+
+        run_ffmpeg([
+            FFMPEG, "-y", "-f", "concat", "-safe", "0", "-i", str(list_file),
+            "-c:v", "libx264", "-crf", "18", "-preset", "fast",
+            "-r", str(info["fps"]), "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+            *(["-c:a", "aac", "-ar", "48000", "-ac", "2"] if audio else ["-an"]),
+            str(output_path),
+        ])
 
 
 def main(argv=None) -> int:
@@ -98,6 +232,7 @@ def main(argv=None) -> int:
     parser.add_argument("project", help="项目路径")
     parser.add_argument("--chapter", required=True, help="章节号（如 ch01）")
     parser.add_argument("--output", default=None, help="输出文件名（默认 chapter.mp4）")
+    parser.add_argument("--shots-dir", default="shots", help="分镜目录名（默认 shots）")
     args = parser.parse_args(argv)
 
     project_root = Path(args.project).resolve()
@@ -110,9 +245,9 @@ def main(argv=None) -> int:
         print(f"错误：章节目录不存在: {chapter_dir}", file=sys.stderr)
         return 1
 
-    videos = find_shot_videos(chapter_dir)
+    videos = find_shot_videos(chapter_dir, args.shots_dir)
     if not videos:
-        print(f"错误：{chapter_dir}/shots/ 下没有找到 shot.mp4 文件", file=sys.stderr)
+        print(f"错误：{chapter_dir}/{args.shots_dir}/ 下没有找到 shot.mp4 文件", file=sys.stderr)
         return 1
 
     print(f"找到 {len(videos)} 个分镜视频:")
