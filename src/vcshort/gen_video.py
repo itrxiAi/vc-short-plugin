@@ -162,7 +162,7 @@ def find_prop_image(project_root: Path, prop_name: str) -> Path | None:
     return imgs[0] if imgs else None
 
 
-def build_prompt_plan(shot: dict, project_root: Path, prev_frame: Path | None = None, keyframe_image: Path | None = None, allow_missing_keyframe: bool = False) -> dict:
+def build_prompt_plan(shot: dict, project_root: Path, keyframe_image: Path | None = None, allow_missing_keyframe: bool = False) -> dict:
     """扫描素材、编索引、拼提示词，不读 base64（dry-run 安全）。
 
     返回 {
@@ -184,7 +184,6 @@ def build_prompt_plan(shot: dict, project_root: Path, prev_frame: Path | None = 
 
     img_index = 1
     keyframe_index = None
-    prev_frame_index = None
     ref_images = []  # [(path, idx)]
     ref_audios = []   # [(path, idx)]
 
@@ -192,12 +191,6 @@ def build_prompt_plan(shot: dict, project_root: Path, prev_frame: Path | None = 
     if keyframe_image and (keyframe_image.exists() or allow_missing_keyframe):
         keyframe_index = img_index
         ref_images.append((keyframe_image, img_index))
-        img_index += 1
-
-    # 上一镜最后一帧（保持连贯性；有首帧图时不再传，首帧图即本镜起点）
-    if prev_frame and not keyframe_image and prev_frame.exists():
-        prev_frame_index = img_index
-        ref_images.append((prev_frame, img_index))
         img_index += 1
 
     # 角色参考图（characters 为 dict 列表，含 name/position）
@@ -259,8 +252,6 @@ def build_prompt_plan(shot: dict, project_root: Path, prev_frame: Path | None = 
     ref_parts = []
     if keyframe_index:
         ref_parts.append(f"@图片{keyframe_index}作为本镜起始画面")
-    if prev_frame_index:
-        ref_parts.append(f"@图片{prev_frame_index}作为上一镜结尾画面，保持连贯")
     for char_key, idx in char_indices.items():
         ref_parts.append(f"参考@图片{idx}的{char_key}形象")
     if scene_indices:
@@ -273,10 +264,10 @@ def build_prompt_plan(shot: dict, project_root: Path, prev_frame: Path | None = 
     if ref_parts:
         sections.append(("参考", "，".join(ref_parts)))
 
-    # 2. 起始画面：有首帧图或上一镜尾帧时以图片为准，不再重复拼接文字字段；
-    #    没有任何起始参考图时才用 keyframe_prompt 作为文字兜底
+    # 2. 起始画面：有首帧图时以图片为准，不再重复拼接文字字段；
+    #    没有首帧图时才用 keyframe_prompt 作为文字兜底
     keyframe_prompt = (shot.get("keyframe_prompt") or "").strip()
-    if not keyframe_index and not prev_frame_index and keyframe_prompt:
+    if not keyframe_index and keyframe_prompt:
         sections.append(("起始画面", keyframe_prompt))
 
     # 3. 表演（动作与对白的时序叙述，一段给模型）
@@ -290,13 +281,14 @@ def build_prompt_plan(shot: dict, project_root: Path, prev_frame: Path | None = 
         camera_parts.append(camera["shot_type"])
     if camera.get("angle"):
         camera_parts.append(camera["angle"])
-    if camera.get("movement") and camera["movement"] != "固定":
-        camera_parts.append(f"镜头{camera['movement']}")
+    if camera.get("movement"):
+        mv = camera["movement"]
+        camera_parts.append("固定镜头" if mv == "固定" else f"镜头{mv}")
     if camera_parts:
         sections.append(("镜头", "，".join(camera_parts)))
 
     # 6. 约束（质量约束）
-    sections.append(("约束", "画面稳定，注意人物与周围环境比例"))
+    sections.append(("约束", "画面稳定，注意人物与周围环境比例，严禁将一个角色面部替换成另一个人的面部"))
 
     prompt_text = "\n".join(f"{k}：{v}" for k, v in sections)
 
@@ -307,9 +299,9 @@ def build_prompt_plan(shot: dict, project_root: Path, prev_frame: Path | None = 
     }
 
 
-def build_content(shot: dict, project_root: Path, prev_frame: Path | None = None, keyframe_image: Path | None = None) -> list:
-    """构建 API content 数组：文本 + 首帧图/上一镜参考帧 + 角色参考图 + 场景参考图 + 角色参考音频。"""
-    plan = build_prompt_plan(shot, project_root, prev_frame, keyframe_image)
+def build_content(shot: dict, project_root: Path, keyframe_image: Path | None = None) -> list:
+    """构建 API content 数组：文本 + 首帧图 + 角色参考图 + 场景参考图 + 角色参考音频。"""
+    plan = build_prompt_plan(shot, project_root, keyframe_image)
     content = []
 
     # 参考图（按 plan 顺序读 base64）
@@ -495,121 +487,6 @@ def extract_frames(video_path: Path, shot_dir: Path) -> tuple:
     return first_frame_path, last_frame_path
 
 
-def find_prev_last_frame(project_root: Path, chapter: str, shot_num: str) -> Path | None:
-    """查找上一个分镜的 last_frame.png，用于保持分镜间连贯性。
-    shot_num 格式为 "主号_子号"（如 "001_02"）或纯数字（如 "001"）。
-    - 同主号的上一子号（如 001_02 → 001_01）
-    - 如果是第一个子号（如 001_01），找上一个主号的最后一个子号（如 001_01 → 002_03）
-    - 纯数字格式按原逻辑处理（001 → 000）
-    """
-    if "_" in shot_num:
-        main, sub = shot_num.split("_", 1)
-        sub_num = int(sub)
-        if sub_num > 1:
-            # 同主号上一子号
-            prev_id = f"{main}_{sub_num - 1:02d}"
-        else:
-            # 第一个子号，找上一个主号的最后一个子号
-            prev_main = int(main) - 1
-            if prev_main < 1:
-                return None
-            prev_main_str = f"{prev_main:03d}"
-            # 找上一个主号下所有子号，取最大的
-            shots_dir = project_root / "chapters" / chapter / "shots"
-            prev_subs = []
-            if shots_dir.is_dir():
-                for d in shots_dir.iterdir():
-                    if d.is_dir() and d.name.startswith(f"shot_{prev_main_str}_"):
-                        sub_part = d.name.replace(f"shot_{prev_main_str}_", "")
-                        if sub_part.isdigit():
-                            prev_subs.append(int(sub_part))
-            if not prev_subs:
-                return None
-            prev_id = f"{prev_main_str}_{max(prev_subs):02d}"
-    else:
-        # 纯数字格式（兼容旧分镜）
-        prev_num = int(shot_num) - 1
-        if prev_num < 1:
-            return None
-        prev_id = f"{prev_num:03d}"
-
-    prev_frame = project_root / "chapters" / chapter / "shots" / f"shot_{prev_id}" / "last_frame.png"
-    if prev_frame.exists():
-        return prev_frame
-    return None
-
-
-def ensure_keyframe(shot: dict, project_root: Path, config: dict, shot_dir: Path) -> Path | None:
-    """按 keyframe_prompt 生成首帧图（keyframe.png），已存在则直接返回。
-
-    参考图：本镜角色图 + 场景图，保身份和地理。生成失败不阻断视频流程。
-    """
-    keyframe_path = shot_dir / "keyframe.png"
-    if keyframe_path.exists():
-        return keyframe_path
-
-    keyframe_prompt = (shot.get("keyframe_prompt") or "").strip()
-    if not keyframe_prompt:
-        print("提示：shot YAML 无 keyframe_prompt，跳过首帧图生成", file=sys.stderr)
-        return None
-
-    from .gen_image import generate_image, download_image, DEFAULT_BASE_URL, DEFAULT_MODEL
-
-    api_cfg = config.get("api") or {}
-    if not api_cfg.get("api_key"):
-        print("警告：未配置 api.api_key，跳过首帧图生成", file=sys.stderr)
-        return None
-    api_config = {
-        "api_key": api_cfg.get("api_key"),
-        "base_url": api_cfg.get("base_url", DEFAULT_BASE_URL),
-        "image_model": api_cfg.get("image_model", DEFAULT_MODEL),
-    }
-
-    # 参考图：角色图（保身份）+ 首张场景图（保地理）
-    ref_images = []
-    ref_descriptions = []
-    for char_item in shot.get("characters") or []:
-        char_name = char_item.get("name", "")
-        char_name_clean = char_name.split(":")[0] if ":" in char_name else char_name
-        img = find_character_image(project_root, char_name_clean, "默认")
-        if img:
-            ref_images.append(str(img))
-            pos = char_item.get("position", "")
-            desc = f"{char_name}形象"
-            if pos:
-                desc += f"，{pos}"
-            ref_descriptions.append(desc)
-    scene_key = shot.get("scene")
-    if scene_key:
-        scene_imgs = find_scene_images(project_root, scene_key)
-        if scene_imgs:
-            ref_images.append(str(scene_imgs[0]))
-            ref_descriptions.append(f"{scene_key}场景")
-
-    style = config.get("style")
-    aspect = config.get("aspect_ratio")
-    from .gen_image import build_prompt
-    final_prompt = build_prompt(
-        keyframe_prompt,
-        {"style": style, "aspect_ratio": aspect},
-        "keyframe",
-        ref_count=len(ref_images),
-        ref_descriptions=ref_descriptions,
-        shot_type=(shot.get("camera") or {}).get("shot_type"),
-    )
-
-    print("正在生成首帧图...")
-    print(f"提示词: {final_prompt}")
-    try:
-        image_url = generate_image(final_prompt, api_config, size="2K", ref_images=ref_images or None)
-        download_image(image_url, keyframe_path)
-    except SystemExit:
-        print("警告：首帧图生成失败，继续用文本提示词生成视频", file=sys.stderr)
-        return None
-    print(f"已保存首帧图: {keyframe_path}")
-    return keyframe_path
-
-
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="vcshort gen-video", description="从分镜生成视频")
     parser.add_argument("project", help="项目路径")
@@ -640,17 +517,10 @@ def main(argv=None) -> int:
         print(f"使用首帧图: {keyframe_image}")
     else:
         keyframe_image = None
-        print("提示：无首帧图，将回退用上一镜尾帧或纯文本提示词（建议先用 /vc-short:gen-keyframe 生成首帧图）", file=sys.stderr)
-
-    # 查找上一镜的最后一帧（保持连贯性；有首帧图时不传，首帧图即本镜起点）
-    prev_frame = None
-    if not keyframe_image:
-        prev_frame = find_prev_last_frame(project_root, args.chapter, args.shot)
-        if prev_frame:
-            print(f"使用上一镜参考帧: {prev_frame}")
+        print("提示：无首帧图，将用纯文本提示词（建议先用 /vc-short:gen-keyframe 生成首帧图）", file=sys.stderr)
 
     # 构建 content
-    content = build_content(shot, project_root, prev_frame, keyframe_image)
+    content = build_content(shot, project_root, keyframe_image)
     print(f"参考图数量: {len([c for c in content if c['type'] == 'image_url'])}")
 
     # 获取比例和时长

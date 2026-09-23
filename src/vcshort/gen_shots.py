@@ -256,6 +256,7 @@ def parse_shot_block(block: str, shot_num: tuple, start_line: int) -> dict:
         "action": action,
         "performance": performance,
         "keyframe_prompt": keyframe_prompt,
+        "keyframe_source": bullets.get("首帧来源", ""),
         "characters": characters,
         "props": props,
         "scene": bullets.get("场景", ""),
@@ -303,7 +304,7 @@ def parse_storyboard(md_text: str) -> list:
 # ---------- YAML 写入 ----------
 
 def build_keyframe_full_prompt(keyframe_prompt: str, style: str, aspect_ratio: str, ref_count: int = 0, ref_descriptions: list = None, shot_type: str = None) -> str:
-    """拼接首帧图完整提示词，与 gen_video.ensure_keyframe 的拼接逻辑一致。
+    """拼接首帧图完整提示词，与 gen_keyframe.ensure_keyframe 的拼接逻辑一致。
 
     用 gen_image.build_prompt 生成结构化提示词（冒号分隔），含参考图引用。
     可直接粘贴到豆包 seedream 网页对话框（参考图手动上传）。
@@ -323,7 +324,7 @@ def build_keyframe_full_prompt(keyframe_prompt: str, style: str, aspect_ratio: s
 
 
 def collect_keyframe_ref_images(project_root: Path, characters: list, scene: str) -> list:
-    """收集首帧图参考图路径，与 gen_video.ensure_keyframe 的收集逻辑一致。
+    """收集首帧图参考图路径，与 gen_keyframe.ensure_keyframe 的收集逻辑一致。
 
     顺序：本镜角色图（保身份，按 characters 顺序）+ 首张场景图（保地理）。
     返回相对项目根的路径列表，供用户照着上传到网页对话框。
@@ -392,6 +393,12 @@ def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str,
     data["keyframe_prompt"] = keyframe_prompt
     data.yaml_set_comment_before_after_key("keyframe_prompt", before="冻结首帧提示词（只投影起点，删终点才有的内容）")
 
+    # 首帧来源（shot-continuity 标注；「上一镜尾帧」开头时 gen-keyframe 以上一镜 last_frame.png 为参考图，按本镜景别/机位重新构图）
+    keyframe_source = shot_data.get("keyframe_source", "").strip()
+    if keyframe_source:
+        data["keyframe_source"] = keyframe_source
+        data.yaml_set_comment_before_after_key("keyframe_source", before="首帧来源标记（同场景同角色标 上一镜尾帧·调整——图1锚场景/光线/身份/道具，站位/姿态/持物按首帧提示词为准；无标记=文本提示词）")
+
     # 首帧图完整提示词（可直接粘贴到豆包 seedream 网页对话框）
     style = config.get("style") or ""
     aspect_ratio = config.get("aspect_ratio") or ""
@@ -417,14 +424,38 @@ def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str,
                     kf_ref_descriptions.append(f"{mapped_scene}场景")
                     break
     shot_type = (shot_data.get("camera") or {}).get("shot_type", "")
-    keyframe_full_prompt = build_keyframe_full_prompt(
-        keyframe_prompt, style, aspect_ratio,
-        ref_count=len(kf_ref_descriptions),
-        ref_descriptions=kf_ref_descriptions,
-        shot_type=shot_type,
-    )
+    # 首帧来源以「上一镜尾帧」开头时，预览写尾帧版提示词（尾帧路径可预测，不要求文件已存在）；
+    # 运行期若上一镜尚无 last_frame.png，ensure_keyframe 会 fallback 到文本提示词
+    kf_ref_images = []
+    prev_last_frame = None
+    if keyframe_source.startswith("上一镜尾帧"):
+        from .gen_keyframe import prev_last_frame_path, build_continuity_keyframe_prompt
+        prev_last_frame = prev_last_frame_path(project_root, chapter, shot_id)
+    if prev_last_frame:
+        shot_for_prompt = {
+            "keyframe_prompt": keyframe_prompt,
+            "characters": mapped_chars,
+            "scene": mapped_scene,
+            "camera": shot_data.get("camera") or {},
+        }
+        keyframe_full_prompt, kf_ref_images_abs = build_continuity_keyframe_prompt(
+            shot_for_prompt, project_root, config, prev_last_frame)
+        kf_ref_images = [
+            str(Path(p).relative_to(project_root)) if Path(p).is_absolute() else str(p)
+            for p in kf_ref_images_abs
+        ]
+    else:
+        keyframe_full_prompt = build_keyframe_full_prompt(
+            keyframe_prompt, style, aspect_ratio,
+            ref_count=len(kf_ref_descriptions),
+            ref_descriptions=kf_ref_descriptions,
+            shot_type=shot_type,
+        )
+        kf_ref_images = collect_keyframe_ref_images(project_root, mapped_chars, mapped_scene)
     data["keyframe_full_prompt"] = keyframe_full_prompt
-    data.yaml_set_comment_before_after_key("keyframe_full_prompt", before="首帧图完整提示词（可直接粘贴到豆包 seedream 网页对话框，参考图手动上传）")
+    data.yaml_set_comment_before_after_key("keyframe_full_prompt", before="首帧图完整提示词预览（标注上一镜尾帧时按尾帧版生成；运行期上一镜无尾帧则 fallback 文本版。可直接粘贴到豆包 seedream 网页对话框，参考图按下方 keyframe_ref_images 顺序上传）")
+    data["keyframe_ref_images"] = kf_ref_images
+    data.yaml_set_comment_before_after_key("keyframe_ref_images", before="首帧参考图上传顺序（对应提示词里 @图N 编号）")
 
     # 角色引用
     characters = map_characters(shot_data.get("characters") or [], char_map)

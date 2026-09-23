@@ -93,7 +93,7 @@ def build_prompt(user_prompt: str, style_config: dict, asset_type: str = None, r
         lines.append("用途：作为图生视频的起始画面")
         # 约束：首帧图人物形象必须严格与参考图一致，保身份
         if ref_count > 0:
-            lines.append("约束：画面中人物形象要严格与参考图一致，五官、发型、服饰、体型不得偏离")
+            lines.append("约束：画面只出现画面描述中的人物，不新增其他人；人物形象严格与参考图一致，五官、发型、服饰、体型不得偏离")
     else:
         lines.append(f"外貌：{user_prompt}")
     # 角色四视图设定图（正面/侧面/背面全身 + 面部特写）+ 纯白背景，

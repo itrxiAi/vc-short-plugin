@@ -61,7 +61,7 @@ vcshort gen-keyframe <项目路径> \
 1. 读取 `chapters/<章节号>/shots/shot_<分镜号>/shot.yaml`（含 `keyframe_prompt`、`characters`、`scene`）
 2. 检查 `keyframe.png` 是否已存在：存在且未加 `--force` 直接返回；加 `--force` 先删除旧图
 3. 校验 `keyframe_prompt` 是否存在，缺失则报错退出
-4. 收集参考图：本镜角色图（保身份）+ 首张场景图（保地理），从 `assets/` 目录扫描（约定优于配置）
+4. 收集参考图：本镜角色图（保身份）+ 首张场景图（保地理），从 `assets/` 目录扫描（约定优于配置）。例外：shot.yaml 有 `keyframe_source: 上一镜尾帧` 时，以 `shot_<上一镜>/last_frame.png` 为图1连续性锚点，另附本镜角色图+场景图，提示词按本镜景别/机位重新构图（切镜头）、画面状态与尾帧保持连续；上一镜尚无尾帧时回退文本提示词
 5. 拼接提示词：`<keyframe_prompt>，视频首帧，画面定格瞬间`，附加 `style` 和 `aspect_ratio`
 6. 调用图片 API（doubao-seedream）生成首帧图，存为 `chapters/<章节号>/shots/shot_<分镜号>/keyframe.png`
 7. 生成失败不阻断视频流程，返回非零退出码
@@ -78,5 +78,5 @@ vcshort gen-keyframe <项目路径> \
 - 首帧图是分镜最可控的起点：`keyframe_prompt`（拆分镜时生成）描述本镜起点画面
 - 角色和场景图片必须已生成（`/vc-short:gen-image` 或 `/vc-short:gen-character`），否则会跳过缺失的参考图，影响身份和地理一致性
 - 图片分辨率通过 `--size 2K` 控制，比例从 `config.yaml` 的 `aspect_ratio` 读取
-- 生成完首帧图后，`/vc-short:gen-video` 会自动检测到 `keyframe.png` 并作为起始画面参考图传入，替代上一镜尾帧
+- 生成完首帧图后，`/vc-short:gen-video` 会自动检测到 `keyframe.png` 并作为起始画面参考图传入
 - 首帧图不满意时加 `--force` 重新生成，或用 `/vc-short:fix-image` 局部修改

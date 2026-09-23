@@ -19,7 +19,210 @@ import argparse
 import sys
 from pathlib import Path
 
-from .gen_video import load_config, load_shot, ensure_keyframe
+from .gen_video import load_config, load_shot, find_character_image, find_scene_images
+
+
+def prev_last_frame_path(project_root: Path, chapter: str, shot_num: str) -> Path | None:
+    """计算上一个分镜 last_frame.png 的期望路径（不要求文件存在）。
+    shot_num 格式为 "主号_子号"（如 "001_02"）或纯数字（如 "001"）。
+    - 同主号的上一子号（如 001_02 → 001_01）
+    - 如果是第一个子号（如 001_01），找上一个主号的最后一个子号（如 001_01 → 002_03）
+    - 纯数字格式按原逻辑处理（001 → 000）
+    """
+    if "_" in shot_num:
+        main, sub = shot_num.split("_", 1)
+        sub_num = int(sub)
+        if sub_num > 1:
+            # 同主号上一子号
+            prev_id = f"{main}_{sub_num - 1:02d}"
+        else:
+            # 第一个子号，找上一个主号的最后一个子号
+            prev_main = int(main) - 1
+            if prev_main < 1:
+                return None
+            prev_main_str = f"{prev_main:03d}"
+            # 找上一个主号下所有子号，取最大的
+            shots_dir = project_root / "chapters" / chapter / "shots"
+            prev_subs = []
+            if shots_dir.is_dir():
+                for d in shots_dir.iterdir():
+                    if d.is_dir() and d.name.startswith(f"shot_{prev_main_str}_"):
+                        sub_part = d.name.replace(f"shot_{prev_main_str}_", "")
+                        if sub_part.isdigit():
+                            prev_subs.append(int(sub_part))
+            if not prev_subs:
+                return None
+            prev_id = f"{prev_main_str}_{max(prev_subs):02d}"
+    else:
+        # 纯数字格式（兼容旧分镜）
+        prev_num = int(shot_num) - 1
+        if prev_num < 1:
+            return None
+        prev_id = f"{prev_num:03d}"
+
+    return project_root / "chapters" / chapter / "shots" / f"shot_{prev_id}" / "last_frame.png"
+
+
+def find_prev_last_frame(project_root: Path, chapter: str, shot_num: str) -> Path | None:
+    """查找上一个分镜的 last_frame.png（文件不存在则返回 None），用于保持分镜间连贯性。"""
+    prev_frame = prev_last_frame_path(project_root, chapter, shot_num)
+    if prev_frame and prev_frame.exists():
+        return prev_frame
+    return None
+
+
+def build_continuity_keyframe_prompt(shot: dict, project_root: Path, config: dict, prev_last_frame: Path) -> tuple:
+    """拼接「首帧来源=上一镜尾帧」的提示词与参考图列表。
+
+    图1锚定场景陈设、光线、人物身份和道具；站位、姿态、持物一律按 keyframe_prompt
+    描述为准（不再区分严格/调整模式）。
+
+    参考图：图1=上一镜尾帧（连续性锚点）+ 本镜角色图（换机位需重绘未见过的一面，保身份）+ 场景图（保地理）。
+    返回 (final_prompt, ref_images)，ref_images 按 @图N 顺序排列。
+    gen_shots 编译期与 ensure_keyframe 运行期共用，保证 YAML 预览与实发提示词一致。
+    """
+    keyframe_prompt = (shot.get("keyframe_prompt") or "").strip()
+    ref_images = [str(prev_last_frame)]
+    ref_lines = ["上一镜结尾画面@图1"]
+    img_idx = 2
+    for char_item in shot.get("characters") or []:
+        char_name = char_item.get("name", "")
+        char_name_clean = char_name.split(":")[0] if ":" in char_name else char_name
+        img = find_character_image(project_root, char_name_clean, "默认")
+        if img:
+            ref_images.append(str(img))
+            ref_lines.append(f"{char_name}形象@图{img_idx}")
+            img_idx += 1
+    scene_key = shot.get("scene")
+    if scene_key:
+        scene_imgs = find_scene_images(project_root, scene_key)
+        if scene_imgs:
+            ref_images.append(str(scene_imgs[0]))
+            ref_lines.append(f"{scene_key}场景@图{img_idx}")
+            img_idx += 1
+
+    camera = shot.get("camera") or {}
+    cam_desc = "·".join(x for x in [camera.get("shot_type"), camera.get("angle")] if x) or "新机位"
+    # 景别→明确裁切范围，防止参考图锚定构图导致换镜不换景别
+    crop_hint = {
+        "特写": "画面裁到肩部以上，聚焦面部",
+        "近景": "画面裁到胸部以上",
+        "中景": "画面裁到腰部或膝盖以上",
+        "全景": "画面含人物全身和周围环境",
+        "远景": "人物在画面中小，环境为主",
+    }.get(camera.get("shot_type"), "")
+
+    picture_line = f"画面：{keyframe_prompt}"
+    constraint_line = ("约束：场景陈设、光线与图1保持一致；人物站位、姿态、持物按画面描述为准；"
+                       "不新增画面描述之外的人物和道具；人物五官、发型、服饰与角色参考图严格一致")
+
+    style = config.get("style")
+    aspect = config.get("aspect_ratio")
+    lines = [
+        "参考：" + "，".join(ref_lines),
+        f"镜头：这是同一场景的下一个镜头，构图必须变化——按{cam_desc}取景，{crop_hint + '，' if crop_hint else ''}禁止复用图1的取景范围和角度",
+        picture_line,
+        constraint_line,
+        "用途：作为图生视频的起始画面",
+    ]
+    if style:
+        lines.append(f"风格：{style}风格")
+    if aspect:
+        lines.append(f"比例：{aspect}构图")
+    return "\n".join(lines), ref_images
+
+
+def ensure_keyframe(shot: dict, project_root: Path, config: dict, shot_dir: Path) -> Path | None:
+    """按 keyframe_prompt 生成首帧图（keyframe.png），已存在则直接返回。
+
+    参考图：本镜角色图 + 场景图，保身份和地理。生成失败不阻断视频流程。
+    """
+    keyframe_path = shot_dir / "keyframe.png"
+    if keyframe_path.exists():
+        return keyframe_path
+
+    keyframe_prompt = (shot.get("keyframe_prompt") or "").strip()
+    if not keyframe_prompt:
+        print("提示：shot YAML 无 keyframe_prompt，跳过首帧图生成", file=sys.stderr)
+        return None
+
+    from .gen_image import generate_image, download_image, DEFAULT_BASE_URL, DEFAULT_MODEL
+
+    api_cfg = config.get("api") or {}
+    if not api_cfg.get("api_key"):
+        print("警告：未配置 api.api_key，跳过首帧图生成", file=sys.stderr)
+        return None
+    api_config = {
+        "api_key": api_cfg.get("api_key"),
+        "base_url": api_cfg.get("base_url", DEFAULT_BASE_URL),
+        "image_model": api_cfg.get("image_model", DEFAULT_MODEL),
+    }
+
+    # 首帧来源=上一镜尾帧/上一镜尾帧·调整：以上一镜 last_frame.png 为图1连续性锚点，
+    # 场景陈设/光线/身份/道具延续图1，站位/姿态/持物一律按 keyframe_prompt 为准
+    keyframe_source = (shot.get("keyframe_source") or "").strip()
+    if keyframe_source.startswith("上一镜尾帧"):
+        prev_last_frame = find_prev_last_frame(project_root, shot.get("chapter") or "", shot.get("shot_id") or "")
+        if prev_last_frame:
+            final_prompt, ref_images = build_continuity_keyframe_prompt(
+                shot, project_root, config, prev_last_frame)
+            print(f"分镜标注首帧来源={keyframe_source}，以尾帧为连续性锚点: {prev_last_frame}")
+            print("正在生成首帧图（切镜头重新构图，状态按画面描述调整）...")
+            print(f"提示词: {final_prompt}")
+            try:
+                image_url = generate_image(final_prompt, api_config, size="2K", ref_images=ref_images)
+                download_image(image_url, keyframe_path)
+            except SystemExit:
+                print("警告：首帧图生成失败，继续用文本提示词生成视频", file=sys.stderr)
+                return None
+            print(f"已保存首帧图: {keyframe_path}")
+            return keyframe_path
+        else:
+            print(f"提示：分镜标注首帧来源={keyframe_source}，但上一镜尚无 last_frame.png（视频未生成），按文本提示词生成首帧")
+
+    # 参考图：角色图（保身份）+ 首张场景图（保地理）
+    ref_images = []
+    ref_descriptions = []
+    for char_item in shot.get("characters") or []:
+        char_name = char_item.get("name", "")
+        char_name_clean = char_name.split(":")[0] if ":" in char_name else char_name
+        img = find_character_image(project_root, char_name_clean, "默认")
+        if img:
+            ref_images.append(str(img))
+            pos = char_item.get("position", "")
+            desc = f"{char_name}形象"
+            if pos:
+                desc += f"，{pos}"
+            ref_descriptions.append(desc)
+    scene_key = shot.get("scene")
+    if scene_key:
+        scene_imgs = find_scene_images(project_root, scene_key)
+        if scene_imgs:
+            ref_images.append(str(scene_imgs[0]))
+            ref_descriptions.append(f"{scene_key}场景")
+
+    style = config.get("style")
+    aspect = config.get("aspect_ratio")
+    from .gen_image import build_prompt
+    final_prompt = build_prompt(
+        keyframe_prompt,
+        {"style": style, "aspect_ratio": aspect},
+        "keyframe",
+        ref_count=len(ref_images),
+        ref_descriptions=ref_descriptions,
+        shot_type=(shot.get("camera") or {}).get("shot_type"),
+    )
+
+    print("正在生成首帧图...")
+    print(f"提示词: {final_prompt}")
+    try:
+        image_url = generate_image(final_prompt, api_config, size="2K", ref_images=ref_images or None)
+        download_image(image_url, keyframe_path)
+    except SystemExit:
+        print("警告：首帧图生成失败，继续用文本提示词生成视频", file=sys.stderr)
+        return None
+    print(f"已保存首帧图: {keyframe_path}")
+    return keyframe_path
 
 
 def main(argv=None) -> int:
