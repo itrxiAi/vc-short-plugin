@@ -21,9 +21,6 @@ if [ -z "$PY" ]; then
 fi
 echo "使用: $PY"
 
-echo "==> 安装依赖（本地验证用）"
-"$PY" -m pip install -q -r requirements.txt
-
 echo "==> 组装插件包到 ${OUT}"
 rm -rf "$OUT"
 mkdir -p "$OUT/bin"
@@ -31,7 +28,7 @@ cp -r skills src agents plugin.json AGENTS.md .claude-plugin .devin-plugin .code
 cp bin/vcshort bin/vcshort.bat "$OUT/bin/"
 chmod +x "$OUT/bin/vcshort"
 
-echo "==> 验证"
+echo "==> 验证启动器"
 "$OUT/bin/vcshort" --help >/dev/null
 "$OUT/bin/vcshort" config-list --help >/dev/null
 
