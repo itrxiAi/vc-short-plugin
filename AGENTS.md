@@ -4,9 +4,9 @@
 
 ## 核心约定
 
-- `vcshort` CLI 固定安装在 `~/.vc-short/`（Windows 为 `%USERPROFILE%\.vc-short`），随插件自带便携 Python 运行时（`python/` 目录），无需系统安装 Python
-- SKILL.md 里用固定路径调用：bash/Git Bash 下 `~/.vc-short/bin/vcshort <command>`；Windows cmd/PowerShell 用 `%USERPROFILE%\.vc-short\bin\vcshort.bat <command>`，不要直接 `python xxx.py`
-- 技能可安装到任意 agent 的技能目录（如 WorkBuddy 的 `~/.workbuddy/skills/`），SKILL.md 一律用上面的固定路径引用 CLI，不依赖技能与 CLI 的相对位置
+- `vcshort` 通过 pip 安装（`pip install vcshort`），安装后 `vcshort` 命令加入 PATH；用户需自行安装系统 Python 3.10+
+- SKILL.md 里直接调用 `vcshort <command>`，不要直接 `python xxx.py`
+- 技能可安装到任意 agent 的技能目录（如 WorkBuddy 的 `~/.workbuddy/skills/`），不依赖技能与 CLI 的相对位置
 - 例外：`crawl-novel` 的截图脚本需要 Playwright，便携 Python 不含，所以它用**系统 `python3`** 运行技能自带脚本（`<本 skill 目录>/scripts/capture_novel.py`），不经过 CLI
 - 资产信息由 `assets/` 目录结构决定，不写入 `config.yaml`
 - `config.yaml` 只保留 `style`、`aspect_ratio`、`api` 全局配置

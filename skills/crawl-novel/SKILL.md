@@ -62,7 +62,7 @@ python3 -m playwright install chromium
 
 ### 3. 滚动截图
 
-用系统 `python3` 运行本 skill 目录下的脚本（`<本 skill 目录>/scripts/capture_novel.py`，如 `~/.vc-short/skills/crawl-novel/scripts/capture_novel.py`）：
+用系统 `python3` 运行本 skill 目录下的脚本（`<本 skill 目录>/scripts/capture_novel.py`）：
 
 ```bash
 python3 "<本 skill 目录>/scripts/capture_novel.py" \

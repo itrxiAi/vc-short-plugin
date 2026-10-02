@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vcshort"
+version = "0.2.0"
+description = "AI 短视频制作 CLI：剧本 → 资产 → 分镜 → 视频 → 合成"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    {name = "skywalker"},
+]
+keywords = ["short-video", "ai", "storyboard", "video-generation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "requests>=2.28",
+    "PyYAML>=6.0",
+    "ruamel.yaml>=0.17",
+    "opencv-python-headless>=4.8,<5",
+    "imageio-ffmpeg>=0.4.9",
+]
+
+[project.scripts]
+vcshort = "vcshort.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/itrxiAi/vc-short-plugin"
+Repository = "https://github.com/itrxiAi/vc-short-plugin"
+
+[tool.setuptools.packages.find]
+where = ["src"]
