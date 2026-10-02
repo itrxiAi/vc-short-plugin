@@ -27,6 +27,7 @@ dependencies = [
     "ruamel.yaml>=0.17",
     "opencv-python-headless>=4.8,<5",
     "imageio-ffmpeg>=0.4.9",
+    "playwright>=1.40",
 ]
 
 [project.scripts]

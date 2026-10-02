@@ -25,18 +25,25 @@ triggers:
 ## 前置条件
 
 - 项目已初始化（有 `chapters/` 目录）
-- **系统 `python3` 已装 playwright 与 chromium**。插件的便携 Python 不含 playwright，所以本技能用系统 `python3`：
+- **已安装 chromium 浏览器**。`pip install vcshort` 已包含 `playwright` 包，但浏览器二进制需要单独安装：
 
 ```bash
-python3 -c "import playwright" 2>/dev/null || echo "缺少 playwright"
+playwright install chromium
 ```
 
-缺则先提示用户安装，不要自行安装：
+检测方法（只检测，不安装）：
 
 ```bash
-python3 -m pip install playwright
-python3 -m playwright install chromium
+python3 -c "import playwright" 2>/dev/null || echo "缺少 playwright 包"
 ```
+
+若 playwright 包缺失，说明 `pip install vcshort` 未成功；若包已装但无 chromium 浏览器，提示用户运行：
+
+```bash
+playwright install chromium
+```
+
+不要自行替用户下载浏览器。
 
 ## 输入参数
 
