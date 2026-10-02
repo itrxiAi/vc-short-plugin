@@ -40,6 +40,7 @@ def find_asset_image(project_root: Path, name: str) -> Path:
     支持：
       - 角色名 → assets/characters/<角色名>/<角色名>.png
       - 角色名:形态名 → assets/characters/<角色名>/<角色名>-<形态名>.png
+      - 群演-<格图名> → assets/characters/群演/<格图名>.png
       - 场景名 → assets/scenes/<场景名>/ 下最后一张（数字最大）
       - 服装名 → assets/costumes/<服装名>.png
       - 道具名 → assets/props/<道具名>.png
@@ -54,6 +55,15 @@ def find_asset_image(project_root: Path, name: str) -> Path:
                 if candidate.exists():
                     return candidate
         print(f"错误：未找到角色形态 '{name}' 的图片（{char_dir}/）", file=sys.stderr)
+        sys.exit(1)
+
+    # 群演格图：name 格式为 "群演-<格图名>" → assets/characters/群演/<格图名>.png
+    if name.startswith("群演-"):
+        for ext in (".png", ".jpg", ".jpeg", ".webp"):
+            candidate = project_root / "assets" / "characters" / "群演" / f"{name[3:]}{ext}"
+            if candidate.exists():
+                return candidate
+        print(f"错误：未找到群演格图 '{name}'（assets/characters/群演/）", file=sys.stderr)
         sys.exit(1)
 
     # 普通查找：按目录约定扫描

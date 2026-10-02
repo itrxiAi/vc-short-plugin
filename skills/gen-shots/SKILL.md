@@ -43,6 +43,7 @@ vcshort gen-shots <项目路径> --chapter <章节号> [--force]
 ## 编译出的 YAML
 
 - `script_segment`（声音）、`action`（动作）、`performance`（表演）、`keyframe_prompt`（首帧提示词）原样落盘
+- `is_flashback`：仅当 `shots.md` 写了 `- 闪回：是` / `- 回忆：是` 时为 `true`，否则 `false`；由 `shot-design` 阶段显式标注，`gen-shots` 不做推断
 - `characters`/`scene`/`props` 按 `character_map.yaml`、`scene_map.yaml`、`prop_map.yaml` 映射为 assets 目录名；映射不到保留原名，可改映射文件后重编译
 - `video_prompt` 预生成——与 gen-video 调 API 提交的 prompt_text 一致，含 @图片N/@音频N 引用；`video_ref_images`/`video_ref_audios` 是对应上传顺序
 

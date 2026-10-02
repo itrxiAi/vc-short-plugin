@@ -248,10 +248,15 @@ def parse_shot_block(block: str, shot_num: tuple, start_line: int) -> dict:
         duration=bullets.get("时长", ""),
     )
 
+    # 回忆/闪回：仅读取 shots.md 中显式标注的 bullet，不在编译期推断
+    flashback_bullet = (bullets.get("闪回") or bullets.get("回忆") or "").strip().lower()
+    is_flashback = flashback_bullet in ("是", "true", "yes")
+
     shot_data = {
         "shot_id": shot_id,
         "source": bullets.get("来源", ""),
         "purpose": bullets.get("职责", ""),
+        "is_flashback": is_flashback,
         "script_segment": script_segment,
         "action": action,
         "performance": performance,
@@ -335,16 +340,12 @@ def collect_keyframe_ref_images(project_root: Path, characters: list, scene: str
         char_name = char_item.get("name", "") if isinstance(char_item, dict) else str(char_item)
         if not char_name:
             continue
-        # 兼容 "角色名:形态名" 写法
+        # 兼容 "角色名:形态名" 写法；群演走 find_character_image 的格图/平铺查找
         char_name = char_name.split(":")[0] if ":" in char_name else char_name
-        char_dir = project_root / "assets" / "characters" / char_name
-        if not char_dir.is_dir():
-            continue
-        for ext in (".png", ".jpg", ".jpeg", ".webp"):
-            candidate = char_dir / f"{char_name}{ext}"
-            if candidate.exists():
-                refs.append(str(candidate.relative_to(project_root)))
-                break
+        from .gen_video import find_character_image
+        candidate = find_character_image(project_root, char_name, "默认")
+        if candidate:
+            refs.append(str(candidate.relative_to(project_root)))
     # 场景图（首张）
     if scene:
         scene_dir = project_root / "assets" / "scenes" / scene
@@ -376,6 +377,10 @@ def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str,
     data["purpose"] = shot_data.get("purpose", "").strip()
     data.yaml_set_comment_before_after_key("purpose", before="镜头职责（本镜结束时观众知道了什么变化）")
 
+    # 回忆/闪回（由 shot-design 阶段显式标注，gen-shots 只读取落盘）
+    data["is_flashback"] = bool(shot_data.get("is_flashback", False))
+    data.yaml_set_comment_before_after_key("is_flashback", before="是否为回忆/闪回（shot-design 阶段标注，影响后期调色/滤镜/转场处理）")
+
     # 声音（对白/声音，视频模型用）
     data["script_segment"] = shot_data.get("script_segment", "").strip()
     data.yaml_set_comment_before_after_key("script_segment", before="声音（对白/声音，视频模型消费）")
@@ -393,11 +398,11 @@ def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str,
     data["keyframe_prompt"] = keyframe_prompt
     data.yaml_set_comment_before_after_key("keyframe_prompt", before="冻结首帧提示词（只投影起点，删终点才有的内容）")
 
-    # 首帧来源（shot-continuity 标注；「上一镜尾帧」开头时 gen-keyframe 以上一镜 last_frame.png 为参考图，按本镜景别/机位重新构图）
+    # 首帧来源（shot-continuity 标注；标了帧图锚点时 gen-keyframe 以该帧图为参考图，按本镜景别/机位重新构图）
     keyframe_source = shot_data.get("keyframe_source", "").strip()
     if keyframe_source:
         data["keyframe_source"] = keyframe_source
-        data.yaml_set_comment_before_after_key("keyframe_source", before="首帧来源标记（同场景同角色标 上一镜尾帧·调整——图1锚场景/光线/身份/道具，站位/姿态/持物按首帧提示词为准；无标记=文本提示词）")
+        data.yaml_set_comment_before_after_key("keyframe_source", before="首帧来源标记（<镜位><帧型>，如 上一镜尾帧/上一镜首帧/上上镜尾帧/shot_001_02首帧——图1锚场景/光线/身份/道具，站位/姿态/持物按首帧提示词为准；无标记=文本提示词）")
 
     # 首帧图完整提示词（可直接粘贴到豆包 seedream 网页对话框）
     style = config.get("style") or ""
@@ -410,9 +415,10 @@ def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str,
     for c in mapped_chars:
         c_name = c.get("name", "")
         c_name_clean = c_name.split(":")[0] if ":" in c_name else c_name
-        if find_character_image(project_root, c_name_clean, "默认"):
+        form_name = c_name.split(":")[1] if ":" in c_name else "默认"
+        if find_character_image(project_root, c_name_clean, form_name):
             pos = c.get("position", "")
-            desc = f"{c_name}形象"
+            desc = f"{c_name_clean}形象"
             if pos:
                 desc += f"，{pos}"
             kf_ref_descriptions.append(desc)
@@ -424,14 +430,15 @@ def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str,
                     kf_ref_descriptions.append(f"{mapped_scene}场景")
                     break
     shot_type = (shot_data.get("camera") or {}).get("shot_type", "")
-    # 首帧来源以「上一镜尾帧」开头时，预览写尾帧版提示词（尾帧路径可预测，不要求文件已存在）；
-    # 运行期若上一镜尚无 last_frame.png，ensure_keyframe 会 fallback 到文本提示词
+    # 首帧来源标了帧图锚点（上一镜尾帧/上一镜首帧/上上镜X帧/shot_XXX_YYX帧）时，
+    # 预览写锚点版提示词（锚点路径可预测，不要求文件已存在）；
+    # 运行期若锚点文件不存在，ensure_keyframe 会 fallback 到文本提示词
     kf_ref_images = []
-    prev_last_frame = None
-    if keyframe_source.startswith("上一镜尾帧"):
-        from .gen_keyframe import prev_last_frame_path, build_continuity_keyframe_prompt
-        prev_last_frame = prev_last_frame_path(project_root, chapter, shot_id)
-    if prev_last_frame:
+    anchor = anchor_label = None
+    if keyframe_source:
+        from .gen_keyframe import resolve_frame_anchor, build_continuity_keyframe_prompt
+        anchor, anchor_label = resolve_frame_anchor(project_root, chapter, shot_id, keyframe_source, frame_kind="尾帧")
+    if anchor is not None:
         shot_for_prompt = {
             "keyframe_prompt": keyframe_prompt,
             "characters": mapped_chars,
@@ -439,7 +446,7 @@ def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str,
             "camera": shot_data.get("camera") or {},
         }
         keyframe_full_prompt, kf_ref_images_abs = build_continuity_keyframe_prompt(
-            shot_for_prompt, project_root, config, prev_last_frame)
+            shot_for_prompt, project_root, config, anchor, anchor_label)
         kf_ref_images = [
             str(Path(p).relative_to(project_root)) if Path(p).is_absolute() else str(p)
             for p in kf_ref_images_abs
@@ -453,7 +460,7 @@ def write_shot_yaml(filepath: Path, shot_data: dict, shot_id: str, chapter: str,
         )
         kf_ref_images = collect_keyframe_ref_images(project_root, mapped_chars, mapped_scene)
     data["keyframe_full_prompt"] = keyframe_full_prompt
-    data.yaml_set_comment_before_after_key("keyframe_full_prompt", before="首帧图完整提示词预览（标注上一镜尾帧时按尾帧版生成；运行期上一镜无尾帧则 fallback 文本版。可直接粘贴到豆包 seedream 网页对话框，参考图按下方 keyframe_ref_images 顺序上传）")
+    data.yaml_set_comment_before_after_key("keyframe_full_prompt", before="首帧图完整提示词预览（标了帧图锚点时按锚点版生成；运行期锚点文件不存在则 fallback 文本版。可直接粘贴到豆包 seedream 网页对话框，参考图按下方 keyframe_ref_images 顺序上传）")
     data["keyframe_ref_images"] = kf_ref_images
     data.yaml_set_comment_before_after_key("keyframe_ref_images", before="首帧参考图上传顺序（对应提示词里 @图N 编号）")
 
@@ -680,9 +687,36 @@ def main(argv=None) -> int:
             print(f"错误：{shots_dir} 下已有分镜文件。使用 --force 覆盖。", file=sys.stderr)
             return 1
 
-    # 写入分镜 YAML
+    # 写入分镜 YAML；锚定上一镜帧图+同景别同机位会导致首帧近似复制，编译期告警
+    from .gen_keyframe import resolve_frame_anchor
+    prev_camera = None
+    prev_shot_dir = None
     for shot_data in shots:
         shot_id = shot_data["shot_id"]
+        camera = shot_data.get("camera") or {}
+        anchor, _ = resolve_frame_anchor(project_root, args.chapter, shot_id, shot_data.get("keyframe_source") or "", frame_kind="尾帧")
+        if prev_camera and anchor is not None and anchor.parent == prev_shot_dir:
+            if camera.get("shot_type") == prev_camera.get("shot_type") and camera.get("angle") == prev_camera.get("angle"):
+                print(f"警告：{shot_id} 首帧来源锚定上一镜，但景别/机位与上一镜相同"
+                      f"（{camera.get('shot_type')}·{camera.get('angle')}），首帧会近似复制锚点帧", file=sys.stderr)
+        # 全景/远景不承担表情刻画和画面内对白：表情细节/说话人台词在全景里读不出
+        if camera.get("shot_type") in ("全景", "远景"):
+            facial_words = ("瞪眼", "瞪大眼", "张嘴", "皱眉", "咬牙", "垂眼", "脸色", "表情", "眼神", "咧嘴", "挑眉", "闭眼")
+            hit = [w for w in facial_words if w in (shot_data.get("performance") or "")]
+            if hit:
+                print(f"警告：{shot_id} 为{camera.get('shot_type')}，但表演依赖面部表情（{('、'.join(hit))}），"
+                      f"表情刻画需近景/中景，请调整景别或拆分镜头", file=sys.stderr)
+            onscreen_speakers = []
+            for line in (shot_data.get("script_segment") or "").splitlines():
+                line = line.strip()
+                m = re.match(r"^(\S+?)(?:（([^）]*)）)?：", line)
+                if m and "画外音" not in (m.group(2) or "") and not line.startswith("["):
+                    onscreen_speakers.append(m.group(1))
+            if onscreen_speakers:
+                print(f"警告：{shot_id} 为{camera.get('shot_type')}，但有画面内人物说话（{'、'.join(onscreen_speakers)}），"
+                      f"对白需中景起步（说话人不在画面内时标注画外音）", file=sys.stderr)
+        prev_camera = camera
+        prev_shot_dir = shots_dir / f"shot_{shot_id}"
         shot_dir = shots_dir / f"shot_{shot_id}"
         shot_dir.mkdir(parents=True, exist_ok=True)
         filepath = shot_dir / "shot.yaml"

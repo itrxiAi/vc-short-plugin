@@ -145,11 +145,19 @@ def render_clip(
         )
 
     command = [FFMPEG, "-y", "-i", str(video_path)]
+    clip_has_audio = has_audio(video_path)
+    if audio and not clip_has_audio:
+        # 无声镜头补静音轨，保证 concat 后整片音轨连续
+        command += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
     if filters:
         command += ["-vf", ",".join(filters)]
     command += ["-map", "0:v:0", "-c:v", "libx264", "-crf", "18", "-preset", "fast"]
     if audio:
-        command += ["-map", "0:a:0?", "-c:a", "aac", "-ar", "48000", "-ac", "2"]
+        if clip_has_audio:
+            command += ["-map", "0:a:0?"]
+        else:
+            command += ["-map", "1:a:0", "-shortest"]
+        command += ["-c:a", "aac", "-ar", "48000", "-ac", "2"]
     else:
         command += ["-an"]
     command += ["-r", str(info["fps"]), "-pix_fmt", "yuv420p", str(output_path)]
@@ -184,7 +192,7 @@ def compose(videos: list, output_path: Path) -> None:
     fade_duration = 0.25
     black_duration = 0.0
     info = get_video_info(videos[0])
-    audio = has_audio(videos[0])
+    audio = any(has_audio(v) for v in videos)
 
     with tempfile.TemporaryDirectory(prefix="compose_") as temp_dir:
         temp_dir = Path(temp_dir)

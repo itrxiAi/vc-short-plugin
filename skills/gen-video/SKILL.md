@@ -72,7 +72,8 @@ vcshort gen-video <项目路径> \
    之后拼接对白内容 + 镜头运动
 7. 提交异步任务，轮询直到完成
 8. 下载视频到 `chapters/<章节号>/shots/shot_<分镜号>/shot.mp4`
-9. 用 opencv 提取视频第一帧和最后一帧，保存为 `first_frame.png` 和 `last_frame.png`
+9. 如果 `shot.yaml` 的 `is_flashback` 为 `true`，自动叠加边缘白雾回忆效果
+10. 用 opencv 提取视频第一帧和最后一帧，保存为 `first_frame.png` 和 `last_frame.png`
 
 视频是否已生成通过检查分镜文件夹内是否有对应 mp4 文件判断。
 
