@@ -9,9 +9,6 @@ on:
 permissions:
   contents: write
 
-env:
-  PYTHON_VERSION: "3.12"
-
 jobs:
   build:
     strategy:
@@ -19,73 +16,29 @@ jobs:
         include:
           - os: macos-latest
             artifact: vcshort-macos
-            pbs_platform: aarch64-apple-darwin
           - os: windows-latest
             artifact: vcshort-windows
-            pbs_platform: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python (CI tooling)
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Download portable Python (python-build-standalone)
-        shell: bash
-        env:
-          PBS_PLATFORM: ${{ matrix.pbs_platform }}
-        run: |
-          curl -fsSL -o pbs.json https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest
-          URL=$(python - <<'PY'
-          import json, os
-          rel = json.load(open("pbs.json"))
-          plat = os.environ["PBS_PLATFORM"]
-          assets = [a for a in rel["assets"]
-                    if a["name"].startswith("cpython-3.12")
-                    and a["name"].endswith("install_only.tar.gz")
-                    and plat in a["name"]
-                    and "freethreaded" not in a["name"]]
-          assert assets, "no matching python-build-standalone asset"
-          assets.sort(key=lambda a: ("pgo" not in a["name"], "shared" not in a["name"]))
-          print(assets[0]["browser_download_url"])
-          PY
-          )
-          echo "PBS asset: $URL"
-          curl -fsSL -o python.tar.gz "$URL"
-          rm -rf runtime
-          mkdir runtime
-          tar -xzf python.tar.gz -C runtime
-
-      - name: Install runtime dependencies into bundled Python
+      - name: Install dependencies
         shell: bash
         run: |
-          if [ -f runtime/python/python.exe ]; then PY=runtime/python/python.exe; else PY=runtime/python/bin/python3; fi
-          "$PY" -m ensurepip --upgrade
-          "$PY" -m pip install --no-cache-dir -r requirements.txt
-
-      - name: Slim bundled Python
-        shell: bash
-        run: |
-          if [ -f runtime/python/python.exe ]; then
-            SP=runtime/python/Lib/site-packages
-            LIB=runtime/python/Lib
-          else
-            SP=runtime/python/lib/python3.12/site-packages
-            LIB=runtime/python/lib/python3.12
-          fi
-          rm -rf "$SP/pip" "$SP/setuptools" "$SP/wheel" "$SP/pip-"*.dist-info "$SP/setuptools-"*.dist-info "$SP/wheel-"*.dist-info
-          rm -rf "$LIB/ensurepip" "$LIB/idlelib" "$LIB/lib2to3" "$LIB/pydoc_data" \
-                 "$LIB/tkinter" "$LIB/turtledemo" "$LIB/test" "$LIB/__pycache__"
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
 
       - name: Assemble plugin package
         shell: bash
         run: |
           mkdir -p pkg/vc-short-plugin/bin
-          cp -r skills src agents plugin.json AGENTS.md .claude-plugin .devin-plugin .codebuddy-plugin pkg/vc-short-plugin/
+          cp -r skills src agents plugin.json AGENTS.md .claude-plugin .devin-plugin .codebuddy-plugin requirements.txt pkg/vc-short-plugin/
           cp bin/vcshort bin/vcshort.bat pkg/vc-short-plugin/bin/
-          cp -r runtime/python pkg/vc-short-plugin/python
           chmod +x pkg/vc-short-plugin/bin/vcshort
 
       - name: Test executable (bash launcher)

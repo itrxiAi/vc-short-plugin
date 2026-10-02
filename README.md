@@ -4,9 +4,25 @@ AI 短视频制作插件（剧本 → 资产 → 分镜 → 视频 → 合成）
 
 ## 安装
 
-分两部分：**插件**（技能 + 子代理，各 agent 的插件机制安装）和**运行时**（`vcshort` CLI + 便携 Python，装到固定位置 `~/.vc-short/`，Windows 为 `%USERPROFILE%\.vc-short`）。技能里用固定路径引用 CLI，因此技能装到哪都不影响运行。
+分两部分：**插件**（技能 + 子代理，各 agent 的插件机制安装）和**运行时**（`vcshort` CLI + Python 源码，装到固定位置 `~/.vc-short/`，Windows 为 `%USERPROFILE%\.vc-short`）。技能里用固定路径引用 CLI，因此技能装到哪都不影响运行。
 
-插件自带便携 Python（含 opencv、ffmpeg），**无需安装 Python、无需配置 PATH**。
+**用户需自行安装系统 Python 3.10+ 并通过 pip 安装依赖**。不再打包便携 Python。
+
+### 1. 安装 Python 与依赖
+
+- **Windows**：https://www.python.org/downloads/windows/ 下载 `python-3.x.x-amd64.exe`，安装时勾选 **Add Python to PATH**
+- **macOS**：`brew install python@3.12` 或从 python.org 下载安装包
+- **Linux**：`sudo apt install python3 python3-pip`
+
+装好 Python 后，在 `~/.vc-short/` 目录下运行：
+
+```bash
+pip install -r requirements.txt
+```
+
+`requirements.txt` 包含 `requests`、`PyYAML`、`ruamel.yaml`、`opencv-python-headless`、`imageio-ffmpeg`。
+
+### 2. 安装插件
 
 ### WorkBuddy
 
@@ -14,13 +30,14 @@ AI 短视频制作插件（剧本 → 资产 → 分镜 → 视频 → 合成）
    `https://github.com/itrxiAi/vc-short-plugin` → 搜索 `vc-short` → 安装
    （或 CLI 内：`/plugin marketplace add itrxiAi/vc-short-plugin` → `/plugin install vc-short@vc-short`）
 2. **装运行时**：从 [Releases](https://github.com/itrxiAi/vc-short-plugin/releases) 下载平台对应的 zip（`vcshort-macos.zip` / `vcshort-windows.zip`），解压后把 `vc-short-plugin` 文件夹重命名为 `.vc-short` 放到用户主目录
-   - 也可以跳过这步：首次使用技能时，agent 会检测到 `~/.vc-short` 缺失并自动下载安装
-3. 对话中使用：`/vc-short:init 项目名` 或直接说「帮我把这本小说做成短视频」
+3. 在 `~/.vc-short/` 下运行 `pip install -r requirements.txt`
+4. 对话中使用：`/vc-short:init 项目名` 或直接说「帮我把这本小说做成短视频」
 
 ### Devin / Claude Code / Cursor
 
-1. **装运行时**（同上）：下载 zip → 解压 → `vc-short-plugin` 重命名为 `.vc-short` 放到用户主目录
-2. **注册插件**（指向 `~/.vc-short` 或仓库克隆目录）：
+1. **装运行时**：下载 zip → 解压 → `vc-short-plugin` 重命名为 `.vc-short` 放到用户主目录
+2. 在 `~/.vc-short/` 下运行 `pip install -r requirements.txt`
+3. **注册插件**（指向 `~/.vc-short` 或仓库克隆目录）：
 
 ```bash
 # Devin CLI
@@ -44,8 +61,8 @@ vc-short-plugin/
 ├── skills/          # 12 个技能（SKILL.md）
 ├── agents/          # 子代理（script-reviewer）
 ├── bin/vcshort      # 启动器（bash）+ vcshort.bat（Windows cmd）
-├── python/          # 便携 Python + site-packages（含 opencv、ffmpeg）
 ├── src/vcshort/     # CLI 源码
+├── requirements.txt # Python 依赖（用户自行 pip install）
 ├── .codebuddy-plugin/marketplace.json   # WorkBuddy/CodeBuddy 插件市场清单
 └── plugin.json      # 插件清单（WorkBuddy / Claude Code / Devin 兼容）
 ```
@@ -55,7 +72,7 @@ vc-short-plugin/
 ```bash
 git clone https://github.com/itrxiAi/vc-short-plugin.git
 cd vc-short-plugin
-./build.sh          # 组装 mac 包到 dist/vc-short-plugin/（CI 用同样逻辑构建三平台）
+./build.sh          # 组装插件包到 dist/vc-short-plugin/（不再打包 Python）
 ```
 
 ## 使用
@@ -182,21 +199,21 @@ vc-short-plugin/
 │   ├── gen_video.py
 │   ├── compose_chapter.py
 │   └── config_manager.py
-├── bin/vcshort              # 便携启动器（bash，macOS/Linux/Git Bash 通用）
-├── bin/vcshort.bat          # 便携启动器（Windows cmd）
-├── build.sh                 # 本地组装脚本（CI 同逻辑）
-├── requirements.txt         # Python 依赖（装入便携 Python）
+├── bin/vcshort              # 系统 Python 启动器（bash，macOS/Linux/Git Bash 通用）
+├── bin/vcshort.bat          # 系统 Python 启动器（Windows cmd）
+├── build.sh                 # 本地组装脚本（CI 同逻辑，不再打包 Python）
+├── requirements.txt         # Python 依赖（用户自行 pip install）
 └── README.md
 ```
 
 ## 工作原理
 
-- 插件自带便携 Python 运行时（[python-build-standalone](https://github.com/astral-sh/python-build-standalone) 官方构建），依赖在打包时装入 `python/`，用户机器**不需要装 Python 和任何依赖**
+- 用户机器需自行安装 **Python 3.10+**，并在 `~/.vc-short/` 下运行 `pip install -r requirements.txt`
 - SKILL.md 通过 `${CODEBUDDY_SKILL_DIR}` / `${CLAUDE_PLUGIN_ROOT}` / 技能源路径定位插件根目录下的 `bin/vcshort`，无需 PATH 配置
-- `bin/vcshort`（bash）和 `bin/vcshort.bat`（cmd）启动器调用自带 Python 运行 `src/vcshort/__main__.py`
-- CI（GitHub Actions）按 tag 触发，在 macOS / Windows runner 上组装便携包并发布 zip，无编译步骤、无杀软误报风险
+- `bin/vcshort`（bash）和 `bin/vcshort.bat`（cmd）启动器查找系统 Python 运行 `src/vcshort/__main__.py`
+- CI（GitHub Actions）按 tag 触发，在 macOS / Windows runner 上组装插件包并发布 zip，无编译步骤
 
 ## 依赖
 
+- 系统 Python 3.10+ 及 `requirements.txt` 中的包：`requests`、`PyYAML`、`ruamel.yaml`、`opencv-python-headless`、`imageio-ffmpeg`
 - 火山引擎方舟 API Key（填入项目的 `config.yaml`）
-- `opencv-python`、`imageio-ffmpeg`（已装入插件自带的便携 Python，无需单独安装）
