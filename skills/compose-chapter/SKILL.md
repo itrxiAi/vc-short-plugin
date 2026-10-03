@@ -17,11 +17,10 @@ triggers:
 
 ## 前置条件
 
-- `vcshort` CLI 固定安装在 `~/.vc-short/`（Windows 为 `%USERPROFILE%\.vc-short`），自带 Python 运行时，无需系统安装 Python：
-  - bash / Git Bash / macOS / Linux：`~/.vc-short/bin/vcshort <command> ...`
-  - Windows cmd / PowerShell：`%USERPROFILE%\.vc-short\bin\vcshort.bat <command> ...`
-- 下文 `vcshort <command>` 均指上述完整路径
-- 若该路径不存在：代用户安装运行时——下载 `https://github.com/itrxiAi/vc-short-plugin/releases/latest/download/vcshort-macos.zip`（Windows 用 `vcshort-windows.zip`），解压并把其中的 `vc-short-plugin` 文件夹移动为 `~/.vc-short`（Windows 为 `%USERPROFILE%\.vc-short`），装好后重试
+- `vcshort` 通过 pip 安装（`pip install vcshort`），安装后命令会加入 PATH：
+  - 任意 shell：`vcshort <command> ...`
+- 下文 `vcshort <command>` 均指该命令
+- 若命令不存在：请运行 `pip install --upgrade vcshort` 重新安装
 
 ## 前置条件
 
@@ -56,8 +55,15 @@ vcshort compose-chapter <项目路径> \
   --output "第1章.mp4"
 ```
 
+从指定分镜目录合成（如 `shots001`）：
+```bash
+vcshort compose-chapter <项目路径> \
+  --chapter <章节号> \
+  --shots-dir shots001
+```
+
 脚本会自动完成以下操作：
-1. 扫描 `chapters/<章节号>/shots/shot_*/shot.mp4`，按分镜号排序
+1. 扫描 `chapters/<章节号>/<shots-dir>/shot_*/shot.mp4`，按分镜号排序
 2. 用 ffmpeg concat 拼接所有分镜视频
 3. 输出到 `chapters/<章节号>/chapter.mp4`
 

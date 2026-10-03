@@ -5,12 +5,13 @@ runtime/
 pkg/
 *.zip
 
-# Python 缓存
+# Python 缓存 / 构建元数据
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .Python
+*.egg-info/
 
 # 虚拟环境
 .venv/

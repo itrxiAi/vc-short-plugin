@@ -17,11 +17,10 @@ triggers:
 
 ## 前置条件
 
-- `vcshort` CLI 固定安装在 `~/.vc-short/`（Windows 为 `%USERPROFILE%\.vc-short`），自带 Python 运行时，无需系统安装 Python：
-  - bash / Git Bash / macOS / Linux：`~/.vc-short/bin/vcshort <command> ...`
-  - Windows cmd / PowerShell：`%USERPROFILE%\.vc-short\bin\vcshort.bat <command> ...`
-- 下文 `vcshort <command>` 均指上述完整路径
-- 若该路径不存在：代用户安装运行时——下载 `https://github.com/itrxiAi/vc-short-plugin/releases/latest/download/vcshort-macos.zip`（Windows 用 `vcshort-windows.zip`），解压并把其中的 `vc-short-plugin` 文件夹移动为 `~/.vc-short`（Windows 为 `%USERPROFILE%\.vc-short`），装好后重试
+- `vcshort` 通过 pip 安装（`pip install vcshort`），安装后命令会加入 PATH：
+  - 任意 shell：`vcshort <command> ...`
+- 下文 `vcshort <command>` 均指该命令
+- 若命令不存在：请运行 `pip install --upgrade vcshort` 重新安装
 
 - 项目的 `config.yaml` 中已填写 `api.api_key`（火山引擎方舟 API Key）
 - `config.yaml` 中已填写 `tts.app_id` 和 `tts.access_key`（火山引擎语音合成凭证）
@@ -37,8 +36,13 @@ triggers:
 | **性别** | `male` 或 `female` | `male` |
 | **形态名** | 角色形态名（可选，默认 默认） | `女装` |
 | **提示词** | 图片生成的描述文本 | `20岁青年，短发，瘦削，穿旧夹克` |
+| **参考图** | 可选，风格参考图路径（多张逗号分隔），保风格一致，形象按提示词走 | `assets/characters/陈青源/陈青源.png` |
+| **面部参考图** | 可选，`--face-image`，抽卡脸裁格路径，需与 `--costume-image` 同用 | `抽卡/抽卡-青年男01-cell5.png` |
+| **服装参考图** | 可选，`--costume-image`，服装选型/选色图裁格路径 | `costumes/军校常服-选型-cell3.png` |
 
-> **角色自动追加"全身照"和"纯白背景"**：脚本会自动在角色提示词后追加，确保上下身一致且背景干净，用户提示词中无需重复写。
+> **角色自动追加四视图构图指令**：脚本默认生成"四视图设定图（1×4横排：正面全身/侧面全身/背面全身/面部特写）+ 纯白背景"，让视频模型在生成不同角度镜头时保持身份一致。
+>
+> **脸+服装拼接模式（`--face-image` + `--costume-image`）**：从抽卡格图/服装选型格图中裁出选定格，作为强参考图传入——生成时面部五官、发型严格与图1一致，服装款式、配色、结构严格与图2一致（与 `--ref-image` 的"仅参考风格"语义相反，两者不可同用）。**此模式下不传 `--prompt`，不写任何人物形象词**——脸和衣服已被参考图锁死，写了只会把形象带偏。裁格用技能自带脚本：`python3 <本skill目录>/scripts/crop_cell.py <网格图> <输出.png> --cell <格号>`（默认4×2网格，`--cols/--rows`可改）。
 
 ## 执行步骤
 
@@ -53,7 +57,7 @@ triggers:
 
 检查对应目录下是否已有同名图片文件：
 
-- **角色** → `assets/characters/<角色名>/<角色名>.png` 或 `<角色名>-<形态>.png`
+- **角色** → `assets/characters/<角色名>/<角色名>.png`（默认形态）或 `assets/characters/<角色名>/<角色名>-<形态>.png`（多形态）。**一个角色只建一个目录，不同形态追加 `--form <形态名>` 生成同目录下的多个图片**
 
 如果已存在，告知用户并让其选择：
 1. 换一个名字
@@ -84,6 +88,19 @@ vcshort gen-image <项目路径> \
 - 如果用户要求覆盖，追加 `--force`
 - 如果不需要自动生成音色，追加 `--no-voice`
 - 如果 `config.yaml` 中指定了不同的 image_model，追加 `--model <模型ID>`
+- 如果用户提供了参考图（保持画风一致），追加 `--ref-image <参考图路径>`（多张逗号分隔）
+- 脸+服装拼接示例：
+
+```bash
+vcshort gen-image <项目路径> \
+  --type character \
+  --name <角色名> \
+  --gender <male|female> \
+  --prompt "<体型/气质等补充>" \
+  --face-image <抽卡格图路径> \
+  --costume-image <服装格图路径> \
+  --size 2K
+```
 
 脚本会自动完成：
 1. 调用 doubao-seedream API 生成角色图片
@@ -110,9 +127,9 @@ vcshort gen-voice <项目路径> \
 ## 文件结构
 
 ```
-assets/characters/<角色名>/
+assets/characters/<角色名>/        # 一个角色一个目录
   <角色名>.png          # 角色图片（默认形态）
-  <角色名>-<形态>.png    # 其他形态
+  <角色名>-<形态>.png    # 其他形态（同一目录下）
   <角色名>.mp3          # 音色参考音频
   voice.json            # 音色元数据（记录使用的音色和已用列表）
 ```

@@ -1,10 +1,8 @@
 ---
 name: gen-shots
-description: 拆分分镜，将一章小说文本拆分为多个分镜 YAML 文件
+description: 把 shots.md 编译成 shot YAML。用户在 shot-split、shot-design、shot-continuity 完成后说"编译分镜/生成 shot yaml/准备生成视频"时使用；不生成媒体，不改 shots.md。
 allowed-tools:
   - read
-  - write
-  - edit
   - grep
   - glob
   - exec
@@ -13,122 +11,45 @@ triggers:
   - model
 ---
 
-# 拆分分镜
+# 编译分镜
 
-## 前置条件
+把 `chapters/<章节号>/shots.md` 编译成 `chapters/<章节号>/shots/shot_XXX_YY/shot.yaml`，供 gen-keyframe / gen-video 消费。
 
-- `vcshort` CLI 固定安装在 `~/.vc-short/`（Windows 为 `%USERPROFILE%\.vc-short`），自带 Python 运行时，无需系统安装 Python：
-  - bash / Git Bash / macOS / Linux：`~/.vc-short/bin/vcshort <command> ...`
-  - Windows cmd / PowerShell：`%USERPROFILE%\.vc-short\bin\vcshort.bat <command> ...`
-- 下文 `vcshort <command>` 均指上述完整路径
-- 若该路径不存在：代用户安装运行时——下载 `https://github.com/itrxiAi/vc-short-plugin/releases/latest/download/vcshort-macos.zip`（Windows 用 `vcshort-windows.zip`），解压并把其中的 `vc-short-plugin` 文件夹移动为 `~/.vc-short`（Windows 为 `%USERPROFILE%\.vc-short`），装好后重试
-- 项目已初始化，且该章节已执行过 `/vc-short:extract` 和 `/vc-short:gen-script`（即 `character_map.yaml`、`scene_map.yaml`、`script.md` 已存在）
+本步只做编译，不写分镜内容。分镜创作链路：shot-split → shot-design → shot-continuity → 本步。
 
-## 输入参数
+## Quick Start
 
-| 参数 | 说明 | 示例 |
-|------|------|------|
-| **项目路径** | 项目根目录的绝对路径 | `/Users/.../末日求生` |
-| **章节号** | 章节编号 | `ch01` |
+`vcshort` 通过 pip 安装（`pip install vcshort`），安装后命令会加入 PATH：
+- 任意 shell：`vcshort <command> ...`
 
-## 分镜编号规则
+下文 `vcshort <command>` 均指该命令。若命令不存在：请运行 `pip install --upgrade vcshort` 重新安装。
 
-存放在 `chapters/<章节号>/shots/shot_XXX_YY/shot.yaml`：
-- `shot_001_01`、`shot_001_02` — **同一地点且角色，角色位置一致**的连续分镜（主号 001 相同，子号递增）
-- `shot_002_01` — 地点或角色组发生变化后的第一个分镜
-- **同主号必须顺序生成**（后一镜需要前一镜的 last_frame 保持连贯），**不同主号可并行**
+## 入口
 
-## 分镜 YAML 格式
+- `chapters/<章节号>/shots.md` 已存在且经 shot-continuity 填完连续性字段（场景、角色@位置、道具、首帧提示词）。
+- `shots/` 目录已有分镜时追加 `--force` 覆盖重编译。
 
-```yaml
-shot_id: "001_01"
-chapter: "ch01"
-script_segment: |
-  对应的剧本原文
-characters:
-  - name: 小帅
-    position: 站在教室中央
-  - name: 小美
-    position: 坐在窗边
-scene: 废弃学校操场
-camera:
-  shot_type: "中景"
-  angle: "平视"
-  movement: "固定"
-  duration: 15
-status: "pending"
-keyframe: null
-video: null
-```
-
-- `characters`：有动作或台词的角色都必须列入（含 `name` 和 `position`），不能省略
-- `position`：从剧本动作描写和场景描述推断，同主号连续分镜的 position 应连贯
-
-## 执行步骤
-
-### 1. 读取文件
-
-读取 `script.md`、`character_map.yaml`、`scene_map.yaml`、`config.yaml`。映射文件不存在则提示用户先执行 `/vc-short:extract`。
-
-### 2. 分析剧本，拆分分镜
-
-先读取本 skill 目录下的 `constraints.md`，**严格遵守其中的约束规则**生成分镜。
-
-**默认一个场景对应一个分镜**。剧本已在 gen-script 阶段按 15 秒时长拆好，一般不需要再拆。
-
-**连续分镜识别**：同时看 script.md 中 `【场景X：描述】` 的地点，以及该分镜的角色组。
-- 地点相同 **且** 角色组一致 = 同主号子号递增
-- 地点不同 **或** 角色组有增减（有人离开/加入）= 新主号
-
-**角色一致性**：同主号的连续分镜必须保持同一批角色，角色增减（离开/加入）必须在 script_segment 中明确交代，不能凭空出现。若角色组发生变化，应开新主号，而不是沿用子号。
-
-### 3. 启动 shot-reviewer 子代理全面审查
-
-将分镜方案交给 `shot-reviewer` 子代理（本插件 `agents/` 目录提供）独立审查，审查提示词见 `agents/shot-reviewer.md`。
-
-- 环境支持显式调用子代理时，传入 `constraints.md` 全文、分镜方案（JSON 数组）、剧本原文与小说原文路径
-- 环境不支持子代理时：读取 `agents/shot-reviewer.md`，主 agent 切换为演员视角，严格按其审查流程逐项自查
-
-子代理有独立 context，不知道拆分过程，从纯第三方视角逐项检查时长、动作对白、角色对应、衔接流畅性，输出结构化审查结果。
-
-**处理审查结果**：
-- subagent 返回"全部通过" → 进入第 4 步
-- subagent 返回问题清单 → 根据建议修改拆分方案，重新启动 subagent 审查，直至通过
-- 修改涉及剧本本身的问题（如缺过渡台词）→ 提示用户重新 gen-script
-
-### 4. 调用脚本写入分镜文件
-
-将分析结果转为 JSON 数组，写入 `chapters/<章节号>/shots.json`，然后调用：
+## 工作流
 
 ```bash
 vcshort gen-shots <项目路径> --chapter <章节号> [--force]
 ```
 
-脚本读取 JSON 生成 YAML 后删除该 JSON。`characters` 用剧本角色名，`scene` 用剧本场景描述，脚本自动通过映射文件转为 assets 目录名。
+1. 跑 CLI。解析 `## SHOT-场序-镜序` 块，逐镜生成 `shot.yaml`。
+2. 报错按行号回 shots.md 修字段，修好重跑——不要在 CLI 之外手改 shot.yaml。
+3. 成功后列出分镜总数和 `shots/` 目录请用户确认。
 
-```json
-[
-  {
-    "shot_id": "001_01",
-    "script_segment": "角色名（动作）：台词...",
-    "characters": [
-      {"name": "角色名A", "position": "站在大殿中央"},
-      {"name": "角色名B", "position": "坐在左侧首位"}
-    ],
-    "scene": "场景名",
-    "camera": {"shot_type": "中景", "angle": "平视", "movement": "固定", "duration": 15}
-  }
-]
-```
+## 编译出的 YAML
 
-已有分镜文件时追加 `--force` 覆盖。映射不到时脚本保留原名称，可后续修改映射文件重新生成。
+- `script_segment`（声音）、`action`（动作）、`performance`（表演）、`keyframe_prompt`（首帧提示词）原样落盘
+- `is_flashback`：仅当 `shots.md` 写了 `- 闪回：是` / `- 回忆：是` 时为 `true`，否则 `false`；由 `shot-design` 阶段显式标注，`gen-shots` 不做推断
+- `characters`/`scene`/`props` 按 `character_map.yaml`、`scene_map.yaml`、`prop_map.yaml` 映射为 assets 目录名；映射不到保留原名，可改映射文件后重编译
+- `video_prompt` 预生成——与 gen-video 调 API 提交的 prompt_text 一致，含 @图片N/@音频N 引用；`video_ref_images`/`video_ref_audios` 是对应上传顺序
 
-### 5. 确认结果
+## 修订
 
-列出所有分镜（序号、角色、场景、时长），询问用户是否满意。
+shots.md 改动后重跑 `vcshort gen-shots --force` 重编译全部镜头。已生成首帧图/视频的镜头，其 `keyframe.png`、`shot.mp4`、`first_frame.png`、`last_frame.png` 保留在分镜目录里，重编译不删。
 
-## 注意事项
+## 完成
 
-- 分镜拆分要自然，不要把一个完整动作或对白拆到两个分镜
-- 角色多形态：`character_map.yaml` 值支持 `角色名:形态名`（如 `小美: 小帅:女装`），映射到 `assets/characters/小帅/小帅-女装.png`
-- 所有 YAML 由脚本用 ruamel.yaml 生成，不要手动编辑 shot YAML
+`shots/shot_<场序>_<镜序>/shot.yaml` 全部生成且无报错，即完成。下一步由用户点名 `/vc-short:gen-keyframe` 或 `/vc-short:gen-video`。

@@ -2,17 +2,18 @@
 """分镜生成视频 — 从 shot YAML 生成视频
 
 用法：
-  vcshort gen-video <项目路径> --chapter <章节号> --shot <分镜号>
+  vcshort gen-video <项目路径> --chapter <章节号> --shot <分镜号> [--with-keyframe]
 
 示例：
   vcshort gen-video /path/to/project --chapter ch01 --shot 001
 
 流程：
-  1. 读取 shot YAML（shot_id, visual_prompt, characters, scene, camera）
-  2. 从 assets 目录扫描角色和场景的图片（约定优于配置）
-  3. 将本地图片转 base64，作为 reference_image 传给视频生成 API
-  4. 轮询任务直到完成，下载视频
-  5. 更新 shot YAML 的 video 字段和 status
+  1. 读取 shot YAML（shot_id, source, purpose, script_segment(声音), action, performance, keyframe_prompt, characters, scene, camera）
+  2. 首帧控制：分镜目录下有 keyframe.png 则作为起始画面参考图；--with-keyframe 时按 keyframe_prompt 自动生成
+  3. 从 assets 目录扫描角色和场景的图片（约定优于配置）
+  4. 将参考图转 base64，作为 reference_image 传给视频生成 API
+  5. 轮询任务直到完成，下载视频
+  6. 更新 shot YAML 的 video 字段和 status
 """
 
 import argparse
@@ -105,12 +106,69 @@ def find_character_voice(project_root: Path, char_name: str) -> Path | None:
     return None
 
 
+EXTRA_GRID_DIR = "群演"
+_IMG_EXTS = (".png", ".jpg", ".jpeg", ".webp")
+
+
+def _crop_extra_cell(sheet: Path, cell: int, out: Path) -> Path | None:
+    """从群演格图裁出第 cell 格，缓存为平铺文件。
+
+    网格布局按图片宽高比推断：竖排占比高（高/宽 > 0.85）视为 4列×2行，否则 4列×1行。
+    """
+    try:
+        import cv2
+    except ImportError:
+        return None
+    img = cv2.imread(str(sheet))
+    if img is None:
+        return None
+    h, w = img.shape[:2]
+    cols, rows = 4, (2 if h / w > 0.85 else 1)
+    if not (1 <= cell <= cols * rows):
+        return None
+    cell_h, cell_w = h // rows, w // cols
+    n = cell - 1
+    r, c = n // cols, n % cols
+    crop = img[r * cell_h:(r + 1) * cell_h, c * cell_w:(c + 1) * cell_w]
+    cv2.imwrite(str(out), crop)
+    return out
+
+
 def find_character_image(project_root: Path, char_name: str, form_name: str = "默认") -> Path | None:
     """从 assets/characters/<char_name>/ 目录扫描角色图片。
     约定：默认形态为 <char_name>.png，其他形态为 <char_name>-<form>.png
+    群演特殊处理（assets/characters/群演/，平铺无子目录）：
+      - 群演-青年男1#3 → 格图 群演/青年男1.png 第3格（裁格后缓存为 群演/青年男1-3.png）
+      - 群演1 / 青年男1-3 → 平铺文件 群演/群演1.png / 群演/青年男1-3.png
     """
+    extra_dir = project_root / "assets" / "characters" / EXTRA_GRID_DIR
+    if char_name.startswith("群演-") and "#" in char_name:
+        label, _, cell_s = char_name[3:].rpartition("#")
+        if extra_dir.is_dir() and cell_s.isdigit():
+            for ext in _IMG_EXTS:
+                sheet = extra_dir / f"{label}{ext}"
+                if sheet.exists():
+                    out = extra_dir / f"{label}-{cell_s}.png"
+                    if out.exists():
+                        return out
+                    return _crop_extra_cell(sheet, int(cell_s), out)
+        return None
+    if char_name.startswith("群演"):
+        if extra_dir.is_dir():
+            for ext in _IMG_EXTS:
+                candidate = extra_dir / f"{char_name}{ext}"
+                if candidate.exists():
+                    return candidate
+        return None
     char_dir = project_root / "assets" / "characters" / char_name
-    if not char_dir.is_dir():
+    if not char_dir.is_dir() and extra_dir.is_dir():
+        # 群演格图裁出的平铺文件：characters/群演/<名>.png
+        for ext in _IMG_EXTS:
+            candidate = extra_dir / f"{char_name}{ext}"
+            if candidate.exists():
+                return candidate
+        char_dir = None
+    if not char_dir:
         return None
     if form_name and form_name != "默认":
         # 查找 <char_name>-<form_name>.png
@@ -137,60 +195,69 @@ def find_scene_images(project_root: Path, scene_name: str) -> list:
     return sorted(imgs, key=lambda p: int(p.stem) if p.stem.isdigit() else p.stem)
 
 
-def build_content(shot: dict, project_root: Path, prev_frame: Path | None = None) -> list:
-    """构建 API content 数组：文本 + 上一镜参考帧 + 角色参考图 + 场景参考图 + 角色参考音频。"""
-    content = []
+def find_prop_image(project_root: Path, prop_name: str) -> Path | None:
+    """从 assets/props/<prop_name>/ 目录扫描道具图片。"""
+    prop_dir = project_root / "assets" / "props" / prop_name
+    if not prop_dir.is_dir():
+        return None
+    # 优先 <prop_name>.png
+    candidate = prop_dir / f"{prop_name}.png"
+    if candidate.exists():
+        return candidate
+    # 兜底：目录下任意图片
+    imgs = [p for p in prop_dir.iterdir() if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")]
+    return imgs[0] if imgs else None
 
+
+def build_prompt_plan(shot: dict, project_root: Path, keyframe_image: Path | None = None, allow_missing_keyframe: bool = False, extra_audios: list = None) -> dict:
+    """扫描素材、编索引、拼提示词，不读 base64（dry-run 安全）。
+
+    返回 {
+        "prompt_text": str,           # 完整提示词，与 API 提交时一致
+        "ref_images": [(path, idx)],  # 参考图路径 + @图片N 索引
+        "ref_audios": [(path, idx)],   # 参考音频路径 + @音频N 索引
+    }
+    """
     camera = shot.get("camera") or {}
     script_segment = shot.get("script_segment", "")
 
     # 从 script_segment 解析出说话人（格式：角色名（动作）：台词）
     import re
     speakers_in_segment = []
-    for m in re.finditer(r'^(\S+?)（[^）]+）：', script_segment, flags=re.MULTILINE):
+    for m in re.finditer(r'^(\S+?)(?:（[^）]+）)?：', script_segment, flags=re.MULTILINE):
         speaker = m.group(1).strip()
         if speaker and speaker not in speakers_in_segment:
             speakers_in_segment.append(speaker)
 
     img_index = 1
-    prev_frame_index = None
+    keyframe_index = None
+    ref_images = []  # [(path, idx)]
+    ref_audios = []   # [(path, idx)]
 
-    # 上一镜最后一帧（保持连贯性）
-    if prev_frame:
-        b64 = image_to_base64(prev_frame)
-        if b64:
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": b64},
-                "role": "reference_image"
-            })
-            prev_frame_index = img_index
-            img_index += 1
+    # 冻结首帧图（优先）：keyframe.png 即本镜起点画面，已包含与上一镜的连贯性
+    if keyframe_image and (keyframe_image.exists() or allow_missing_keyframe):
+        keyframe_index = img_index
+        ref_images.append((keyframe_image, img_index))
+        img_index += 1
 
     # 角色参考图（characters 为 dict 列表，含 name/position）
+    # 注：position 只用于首帧图生成，不进 video_prompt
     characters = shot.get("characters") or []
     char_indices = {}
-    char_positions = {}
     for char_item in characters:
         char_name = char_item.get("name", "")
-        position = char_item.get("position", "")
+        char_name_clean = char_name.split(":")[0] if ":" in char_name else char_name
+        form_name = char_name.split(":")[1] if ":" in char_name else "默认"
 
-        char_img = find_character_image(project_root, char_name, "默认")
+        char_img = find_character_image(project_root, char_name_clean, form_name)
         if not char_img:
-            print(f"警告：未找到角色 {char_name} 的图片（assets/characters/{char_name}/）", file=sys.stderr)
+            hint = f"assets/characters/{EXTRA_GRID_DIR}/（格图引用写法：群演-<格图名>#<格号>）" if char_name.startswith("群演") else f"assets/characters/{char_name_clean}/"
+            print(f"警告：未找到角色 {char_name_clean} 的图片（{hint}）", file=sys.stderr)
             continue
 
-        b64 = image_to_base64(char_img)
-        if b64:
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": b64},
-                "role": "reference_image"
-            })
-            char_indices[char_name] = img_index
-            if position:
-                char_positions[char_name] = position
-            img_index += 1
+        char_indices[char_name] = img_index
+        ref_images.append((char_img, img_index))
+        img_index += 1
 
     # 场景参考图（支持多张，全部传入增加多样性）
     scene_key = shot.get("scene")
@@ -198,15 +265,23 @@ def build_content(shot: dict, project_root: Path, prev_frame: Path | None = None
     if scene_key:
         scene_imgs = find_scene_images(project_root, scene_key)
         for scene_img_path in scene_imgs:
-            b64 = image_to_base64(scene_img_path)
-            if b64:
-                content.append({
-                    "type": "image_url",
-                    "image_url": {"url": b64},
-                    "role": "reference_image"
-                })
-                scene_indices.append(img_index)
-                img_index += 1
+            scene_indices.append(img_index)
+            ref_images.append((scene_img_path, img_index))
+            img_index += 1
+
+    # 道具参考图（本镜出现的道具，传图保持视觉一致）
+    prop_indices = {}
+    for prop_item in shot.get("props") or []:
+        prop_name = prop_item.get("name", "") if isinstance(prop_item, dict) else prop_item
+        if not prop_name:
+            continue
+        prop_img = find_prop_image(project_root, prop_name)
+        if not prop_img:
+            print(f"提示：未找到道具 {prop_name} 的图片（assets/props/{prop_name}/）", file=sys.stderr)
+            continue
+        prop_indices[prop_name] = img_index
+        ref_images.append((prop_img, img_index))
+        img_index += 1
 
     # 角色参考音频（有对白的角色传入音色，让视频用该音色说对白）
     audio_indices = {}
@@ -214,81 +289,108 @@ def build_content(shot: dict, project_root: Path, prev_frame: Path | None = None
         char_name = speaker.split(":")[0] if ":" in speaker else speaker
         voice_path = find_character_voice(project_root, char_name)
         if voice_path:
-            audio_b64 = audio_to_base64(voice_path)
-            if audio_b64:
-                content.append({
-                    "type": "audio_url",
-                    "audio_url": {"url": audio_b64},
-                    "role": "reference_audio"
-                })
-                audio_indices[speaker] = img_index
-                img_index += 1
-                print(f"  角色 {speaker} 音色: {voice_path.name}")
+            audio_indices[speaker] = img_index
+            ref_audios.append((voice_path, img_index))
+            img_index += 1
+            print(f"  角色 {speaker} 音色: {voice_path.name}")
 
-    # 构建提示词：素材角色指定 + 动作/剧情描述(含对白) + 镜头语言 + 氛围
-    prompt_parts = []
+    # 构建提示词：结构化 key：value 换行格式
+    # 参考 / 起始画面 / 动作 / 对白 / 镜头 / 约束
+    sections = []  # [(key, value)]
 
-    # 1. 素材角色指定（用 @图片N/@音频N 引用，符合 Seedance 官方写法）
-    if prev_frame_index:
-        prompt_parts.append(f"@图片{prev_frame_index}作为上一镜结尾画面，保持连贯")
+    # 1. 参考（素材角色指定，用 @图片N/@音频N 引用，符合 Seedance 官方写法）
+    ref_parts = []
+    if keyframe_index:
+        ref_parts.append(f"@图片{keyframe_index}作为本镜起始画面")
     for char_key, idx in char_indices.items():
-        pos = char_positions.get(char_key)
-        if pos:
-            prompt_parts.append(f"参考@图片{idx}的{char_key}形象，{pos}")
-        else:
-            prompt_parts.append(f"参考@图片{idx}的{char_key}形象")
+        ref_parts.append(f"参考@图片{idx}的{char_key}形象")
     if scene_indices:
         idx_strs = "、".join(f"@图片{i}" for i in scene_indices)
-        prompt_parts.append(f"场景为{idx_strs}")
+        ref_parts.append(f"场景为{idx_strs}")
+    for prop_name, idx in prop_indices.items():
+        ref_parts.append(f"参考@图片{idx}的{prop_name}外观")
     for speaker, idx in audio_indices.items():
-        prompt_parts.append(f"{speaker}的音色参考@音频{idx}")
+        ref_parts.append(f"{speaker}的音色参考@音频{idx}")
+    extra_audios = extra_audios or []
+    for i, audio_path in enumerate(extra_audios):
+        idx = img_index
+        img_index += 1
+        ref_audios.append((audio_path, idx))
+        ref_parts.append(f"环境音/音效参考@音频{idx}")
+    if ref_parts:
+        sections.append(("参考", "，".join(ref_parts)))
 
-    # 2. 动作/剧情描述（用 script_segment 按时间线叙述，动作和对白交织在一起）
-    # script_segment 已包含动作描写和对白的先后顺序，模型能理解时间线
-    if script_segment:
-        # 把剧本片段里的「角色（动作）：台词」转为自然叙述
-        # 如 "小帅（低沉的声音从身后传来）：放下。" → 小帅低沉的声音从身后传来，说"放下。"
-        narrative = script_segment
-        # 去掉括号里的纯动作描写行的括号（如 "（林霸回头...）" → "林霸回头..."）
-        narrative = re.sub(r'\n（([^）]+)）', r'\n\1', narrative)
-        # 把 "角色（动作）：台词" 转为 "角色动作，用普通话说"台词""
-        def convert_dialogue(m):
-            speaker = m.group(1)
-            action = m.group(2) or ""
-            text = m.group(3) or ""
-            parts = []
-            if action:
-                parts.append(f"{speaker}{action}")
-            if text:
-                parts.append(f'{speaker}用普通话说"{text}"')
-            return "，".join(parts)
-        narrative = re.sub(r'^(\S+?)（([^）]+)）：(.+)$', convert_dialogue, narrative, flags=re.MULTILINE)
-        # 简化换行为逗号
-        narrative = narrative.replace("\n", "，")
-        prompt_parts.append(narrative)
+    # 2. 起始画面：有首帧图时以图片为准，不再重复拼接文字字段；
+    #    没有首帧图时才用 keyframe_prompt 作为文字兜底
+    keyframe_prompt = (shot.get("keyframe_prompt") or "").strip()
+    if not keyframe_index and keyframe_prompt:
+        sections.append(("起始画面", keyframe_prompt))
 
-    # 3. 镜头语言（景别 + 运镜 + 角度，归在一起）
+    # 3. 表演（动作与对白的时序叙述，一段给模型）
+    performance = (shot.get("performance") or "").strip()
+    if performance:
+        sections.append(("表演", performance))
+
+    # 5. 镜头（景别 + 运镜 + 角度）
     camera_parts = []
     if camera.get("shot_type"):
         camera_parts.append(camera["shot_type"])
     if camera.get("angle"):
         camera_parts.append(camera["angle"])
-    if camera.get("movement") and camera["movement"] != "固定":
-        camera_parts.append(f"镜头{camera['movement']}")
+    if camera.get("movement"):
+        mv = camera["movement"]
+        camera_parts.append("固定镜头" if mv == "固定" else f"镜头{mv}")
     if camera_parts:
-        prompt_parts.append("，".join(camera_parts))
+        sections.append(("镜头", "，".join(camera_parts)))
 
-    # 4. 质量约束
-    prompt_parts.append("单个场景中尽量保持镜头固定，减少运镜和镜头切换，画面稳定")
-    prompt_parts.append("注意人物与周围环境比例")
+    # 6. 约束（质量约束）
+    constraint = "画面稳定，注意人物与周围环境比例，严禁将一个角色面部替换成另一个人的面部"
+    if speakers_in_segment:
+        constraint += "；对白使用参考音色播报"
+    sections.append(("约束", constraint))
 
-    prompt_text = "，".join(prompt_parts)
-    content.insert(0, {"type": "text", "text": prompt_text})
+    prompt_text = "\n".join(f"{k}：{v}" for k, v in sections)
 
-    return content
+    return {
+        "prompt_text": prompt_text,
+        "ref_images": ref_images,
+        "ref_audios": ref_audios,
+        "has_dialogue": bool(speakers_in_segment),
+    }
 
 
-def submit_video_task(content: list, config: dict, ratio: str, duration: int) -> str:
+def build_content(shot: dict, project_root: Path, keyframe_image: Path | None = None, extra_audios: list = None) -> list:
+    """构建 API content 数组：文本 + 首帧图 + 角色参考图 + 场景参考图 + 角色参考音频。"""
+    plan = build_prompt_plan(shot, project_root, keyframe_image, extra_audios=extra_audios)
+    content = []
+
+    # 参考图（按 plan 顺序读 base64）
+    for img_path, idx in plan["ref_images"]:
+        b64 = image_to_base64(img_path)
+        if b64:
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": b64},
+                "role": "reference_image"
+            })
+
+    # 参考音频
+    for audio_path, idx in plan["ref_audios"]:
+        audio_b64 = audio_to_base64(audio_path)
+        if audio_b64:
+            content.append({
+                "type": "audio_url",
+                "audio_url": {"url": audio_b64},
+                "role": "reference_audio"
+            })
+
+    # 文本提示词放最前
+    content.insert(0, {"type": "text", "text": plan["prompt_text"]})
+
+    return content, plan
+
+
+def submit_video_task(content: list, config: dict, ratio: str, duration: int, generate_audio: bool = True) -> str:
     """提交视频生成任务，返回 task_id。"""
     api_cfg = config.get("api") or {}
     api_key = api_cfg.get("api_key")
@@ -308,7 +410,7 @@ def submit_video_task(content: list, config: dict, ratio: str, duration: int) ->
         "duration": max(duration, 5),
         "resolution": resolution,
         "watermark": False,
-        "generate_audio": True,
+        "generate_audio": generate_audio,
     }
     headers = {
         "Content-Type": "application/json",
@@ -319,7 +421,18 @@ def submit_video_task(content: list, config: dict, ratio: str, duration: int) ->
     print(f"模型: {model}")
     print(f"比例: {ratio}，时长: {max(duration, 5)}s")
 
-    resp = requests.post(endpoint, json=payload, headers=headers, timeout=60)
+    last_err = None
+    for attempt in range(3):
+        try:
+            resp = requests.post(endpoint, json=payload, headers=headers, timeout=(60, 300))
+            break
+        except requests.exceptions.RequestException as e:
+            last_err = e
+            print(f"提交请求失败（第 {attempt + 1} 次）：{e}，5 秒后重试...", file=sys.stderr)
+            time.sleep(5)
+    else:
+        print(f"提交失败：重试 3 次仍超时/出错: {last_err}", file=sys.stderr)
+        sys.exit(1)
     if resp.status_code != 200:
         print(f"提交失败 ({resp.status_code}): {resp.text}", file=sys.stderr)
         sys.exit(1)
@@ -434,50 +547,6 @@ def extract_frames(video_path: Path, shot_dir: Path) -> tuple:
     return first_frame_path, last_frame_path
 
 
-def find_prev_last_frame(project_root: Path, chapter: str, shot_num: str) -> Path | None:
-    """查找上一个分镜的 last_frame.png，用于保持分镜间连贯性。
-    shot_num 格式为 "主号_子号"（如 "001_02"）或纯数字（如 "001"）。
-    - 同主号的上一子号（如 001_02 → 001_01）
-    - 如果是第一个子号（如 001_01），找上一个主号的最后一个子号（如 001_01 → 002_03）
-    - 纯数字格式按原逻辑处理（001 → 000）
-    """
-    if "_" in shot_num:
-        main, sub = shot_num.split("_", 1)
-        sub_num = int(sub)
-        if sub_num > 1:
-            # 同主号上一子号
-            prev_id = f"{main}_{sub_num - 1:02d}"
-        else:
-            # 第一个子号，找上一个主号的最后一个子号
-            prev_main = int(main) - 1
-            if prev_main < 1:
-                return None
-            prev_main_str = f"{prev_main:03d}"
-            # 找上一个主号下所有子号，取最大的
-            shots_dir = project_root / "chapters" / chapter / "shots"
-            prev_subs = []
-            if shots_dir.is_dir():
-                for d in shots_dir.iterdir():
-                    if d.is_dir() and d.name.startswith(f"shot_{prev_main_str}_"):
-                        sub_part = d.name.replace(f"shot_{prev_main_str}_", "")
-                        if sub_part.isdigit():
-                            prev_subs.append(int(sub_part))
-            if not prev_subs:
-                return None
-            prev_id = f"{prev_main_str}_{max(prev_subs):02d}"
-    else:
-        # 纯数字格式（兼容旧分镜）
-        prev_num = int(shot_num) - 1
-        if prev_num < 1:
-            return None
-        prev_id = f"{prev_num:03d}"
-
-    prev_frame = project_root / "chapters" / chapter / "shots" / f"shot_{prev_id}" / "last_frame.png"
-    if prev_frame.exists():
-        return prev_frame
-    return None
-
-
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="vcshort gen-video", description="从分镜生成视频")
     parser.add_argument("project", help="项目路径")
@@ -501,13 +570,26 @@ def main(argv=None) -> int:
         print(f"分镜 {args.shot} 已有视频: {video_path}")
         return 0
 
-    # 查找上一镜的最后一帧（保持连贯性）
-    prev_frame = find_prev_last_frame(project_root, args.chapter, args.shot)
-    if prev_frame:
-        print(f"使用上一镜参考帧: {prev_frame}")
+    # 冻结首帧图：分镜目录下有 keyframe.png 则作为起始画面参考图
+    # 首帧图由独立命令 /vc-short:gen-keyframe 生成，本命令不再自动生成
+    keyframe_image = shot_dir / "keyframe.png"
+    if keyframe_image.exists():
+        print(f"使用首帧图: {keyframe_image}")
+    else:
+        keyframe_image = None
+        print("提示：无首帧图，将用纯文本提示词（建议先用 /vc-short:gen-keyframe 生成首帧图）", file=sys.stderr)
+
+    # 额外参考音频：分镜目录下的 sound.mp3 / audio.mp3 作为环境音/音效参考
+    extra_audios = []
+    for cand in ("sound.mp3", "audio.mp3", "sfx.mp3"):
+        p = shot_dir / cand
+        if p.exists():
+            extra_audios.append(p)
+            if len(extra_audios) >= 1:
+                break
 
     # 构建 content
-    content = build_content(shot, project_root, prev_frame)
+    content, plan = build_content(shot, project_root, keyframe_image, extra_audios=extra_audios)
     print(f"参考图数量: {len([c for c in content if c['type'] == 'image_url'])}")
 
     # 获取比例和时长
@@ -518,8 +600,8 @@ def main(argv=None) -> int:
     if duration not in (5, 10, 15):
         duration = 15 if duration > 10 else (10 if duration > 5 else 5)
 
-    # 提交任务
-    task_id = submit_video_task(content, config, ratio, duration)
+    # 提交任务：只对含对白的镜头生成音轨，无对白镜头静音（不产出环境音/配乐）
+    task_id = submit_video_task(content, config, ratio, duration, generate_audio=plan["has_dialogue"])
 
     # 轮询等待
     video_url = poll_task(task_id, config)
@@ -528,6 +610,12 @@ def main(argv=None) -> int:
     print(f"视频生成完成，正在下载...")
     download_video(video_url, video_path)
     print(f"已保存: {video_path}")
+
+    # 回忆/闪回：叠加边缘白雾
+    if shot.get("is_flashback"):
+        print("本镜为回忆/闪回，正在叠加边缘白雾...")
+        from .apply_flashback_fog import apply_flashback_fog
+        apply_flashback_fog(video_path)
 
     # 提取第一帧和最后一帧
     extract_frames(video_path, shot_dir)

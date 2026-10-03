@@ -40,6 +40,7 @@ def find_asset_image(project_root: Path, name: str) -> Path:
     支持：
       - 角色名 → assets/characters/<角色名>/<角色名>.png
       - 角色名:形态名 → assets/characters/<角色名>/<角色名>-<形态名>.png
+      - 群演-<格图名> → assets/characters/群演/<格图名>.png
       - 场景名 → assets/scenes/<场景名>/ 下最后一张（数字最大）
       - 服装名 → assets/costumes/<服装名>.png
       - 道具名 → assets/props/<道具名>.png
@@ -54,6 +55,15 @@ def find_asset_image(project_root: Path, name: str) -> Path:
                 if candidate.exists():
                     return candidate
         print(f"错误：未找到角色形态 '{name}' 的图片（{char_dir}/）", file=sys.stderr)
+        sys.exit(1)
+
+    # 群演格图：name 格式为 "群演-<格图名>" → assets/characters/群演/<格图名>.png
+    if name.startswith("群演-"):
+        for ext in (".png", ".jpg", ".jpeg", ".webp"):
+            candidate = project_root / "assets" / "characters" / "群演" / f"{name[3:]}{ext}"
+            if candidate.exists():
+                return candidate
+        print(f"错误：未找到群演格图 '{name}'（assets/characters/群演/）", file=sys.stderr)
         sys.exit(1)
 
     # 普通查找：按目录约定扫描
@@ -194,13 +204,15 @@ def main(argv=None) -> int:
     style = config.get("style")
     aspect = config.get("aspect_ratio")
 
-    # 拼接提示词：风格 + 修改提示词
-    parts = []
+    # 拼接提示词：修改指令在前（权重高），明确四视图都要改，风格在后
+    parts = [
+        args.prompt,
+        "上排正面全身、侧面全身和下排背面全身、面部特写四个视图全部同步修改，面部特写视图也要改成新的五官和发型",
+    ]
     if style:
         parts.append(f"{style}风格")
     if aspect:
         parts.append(f"{aspect}构图")
-    parts.append(args.prompt)
     final_prompt = "，".join(parts)
 
     # 编码原图
