@@ -180,11 +180,14 @@ python -m twine upload dist/*
 
 ```
 vc-short-plugin/
+├── .codebuddy-plugin/
+│   ├── marketplace.json     # WorkBuddy / CodeBuddy 市场清单
+│   └── plugin.json          # WorkBuddy / CodeBuddy 插件清单
 ├── .devin-plugin/
 │   └── plugin.json          # Devin 插件清单
 ├── .claude-plugin/
-│   └── plugin.json          # Claude Code / WorkBuddy 插件清单
-├── plugin.json              # Cursor / Agent Plugins 清单
+│   └── plugin.json          # Claude Code 插件清单
+├── plugin.json              # Cursor / Agent Plugins 清单（须含 $schema）
 ├── skills/                  # 12 个技能
 │   ├── init/SKILL.md
 │   ├── crawl-novel/SKILL.md
