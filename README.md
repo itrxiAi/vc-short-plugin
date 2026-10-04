@@ -148,14 +148,29 @@ python -m twine upload dist/*
 
 - `chapters/<章节号>/script.md` — 改编剧本（场景用 `## SC001 内 · 地点 · 时间` 标题分隔，按戏剧工作切场景，不按时长；支持 `[连续性]`/`[画面文字]`/`[转场]` 生产标签）
 
-### `/vc-short:gen-shots` — 拆分分镜
+### `/vc-short:shot-split` — 拆分镜头事件
 
-按镜头职责拆分：每镜有唯一职责（本镜结束时观众知道了什么变化）、`起点 → 唯一动作 → 终点` 状态链、对白估时定档（5/10/15 秒）、冻结首帧提示词。LLM 直接写 Markdown 分镜文档，CLI 编译为 shot YAML。**产物：**
+把 `script.md` 的每个戏剧事件拆成独立镜头候选，输出 `chapters/<章节号>/shot-split.md`。
 
-- `chapters/<章节号>/shots.md` — 分镜文档（drama 风格 `## SHOT-场序-镜序` 块，人可读的创作产物，保留不删）
-- `chapters/<章节号>/shots/shot_001_01/shot.yaml` — 分镜参数（`source`、`purpose`、`script_segment`、`action`、`keyframe_prompt`、`end_state`、`characters`、`scene`、`camera`、`status: pending`）
-- `chapters/<章节号>/shots/shot_001_02/shot.yaml` — 同主号 = 「同一地点 + 同一批角色」的连续分镜，子号递增
-- `chapters/<章节号>/shots/shot_002_01/shot.yaml` — 地点或角色组变化后开新主号
+### `/vc-short:shot-design` — 设计镜头
+
+给 `shot-split.md` 里每个事件贴镜头标签：职责、时长、景别、机位、声音、动作。输出 `chapters/<章节号>/shots.md`。
+
+### `/vc-short:shot-continuity` — 填连续性
+
+给 `shots.md` 填连续性字段：角色 position、道具、首帧提示词等，保证跨镜一致。
+
+### `/vc-short:gen-shots` — 编译分镜
+
+把 `shots.md` 编译成 `shot.yaml`。**产物：**
+
+- `chapters/<章节号>/shots/shot_001_01/shot.yaml` — 分镜参数
+- `chapters/<章节号>/shots/shot_001_02/shot.yaml` — 同主号连续分镜
+- `chapters/<章节号>/shots/shot_002_01/shot.yaml` — 地点/角色变化后开新主号
+
+### `/vc-short:gen-keyframe` — 生成分镜首帧图
+
+为每个 `shot.yaml` 生成首帧参考图 `keyframe.png`，确认满意后再生成视频，避免图片+视频两笔费用同时产生。
 
 ### `/vc-short:gen-video` — 生成分镜视频
 
